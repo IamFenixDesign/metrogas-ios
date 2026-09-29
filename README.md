@@ -2,71 +2,102 @@
 
 App nativa SwiftUI de demostración para gestionar/consultar facturas y consumo de gas natural, con datos mock estilo **MetroGAS Argentina**. Funciona offline, sin autenticación a APIs reales.
 
-## Requisitos
+## Requisitos (desarrollo local)
 
 - macOS con **Xcode 15+** (recomendado Xcode 16)
 - Simulador iPhone o dispositivo físico con **iOS 17+**
 
-## Abrir y ejecutar
+## Abrir y ejecutar (Mac + Xcode)
 
 1. Cloná o abrí esta carpeta en tu Mac.
 2. Abrí el proyecto:
    ```bash
    open Metrogas.xcodeproj
    ```
-   O desde Xcode: **File → Open…** y elegí `Metrogas.xcodeproj`.
-3. En la barra de esquema, seleccioná el target **Metrogas** y un simulador (por ejemplo **iPhone 16**).
-4. Pulsá **Run** (⌘R).
-5. Al iniciar, la app pide permiso de **notificaciones locales** para recordatorios de vencimiento (también configurable en **Cuenta**).
+3. Seleccioná el target **Metrogas** y un simulador → **Run** (⌘R).
+4. La app pide permiso de **notificaciones locales** para recordatorios (también en **Cuenta**).
 
-Si Xcode pide un Development Team para firmar, en el target **Metrogas → Signing & Capabilities** elegí tu equipo personal (Apple ID). Para simulador suele alcanzar con Automatic signing.
+## Build IPA con GitHub Actions (sin Mac)
 
-## Qué incluye
+Workflow: [`.github/workflows/ios-ipa.yml`](.github/workflows/ios-ipa.yml)
+
+### Qué hace
+
+1. Corre en `macos-14` con Xcode.
+2. Si **no** hay secrets de firma Apple → genera un **IPA unsigned** (artefacto descargable; no se instala en iPhone hasta resignarlo).
+3. Si hay secrets de firma → archive + export firmado (`ad-hoc` por defecto).
+4. Sube el archivo como artifact **`Metrogas-ipa`**.
+
+### Cómo disparar
+
+```bash
+# Tras pushear este repo a GitHub:
+gh workflow run ios-ipa.yml
+# o: push a main / cursor/**
+```
+
+En GitHub: **Actions → Build Metrogas IPA → Run workflow**.
+
+### Cómo descargar el IPA
+
+1. Abrí el run en **Actions**.
+2. Al final del job, sección **Artifacts** → **Metrogas-ipa**.
+3. Descargá el zip y extraé `Metrogas.ipa`.
+
+CLI:
+
+```bash
+gh run list --workflow=ios-ipa.yml
+gh run download <RUN_ID> -n Metrogas-ipa
+```
+
+### Secrets para IPA instalable en dispositivo / App Store
+
+Ver detalle en [`ci/SIGNING_SECRETS.md`](ci/SIGNING_SECRETS.md).
+
+| Secret | Uso |
+|---|---|
+| `APPLE_CERTIFICATE_BASE64` | Certificado `.p12` en base64 |
+| `APPLE_CERTIFICATE_PASSWORD` | Password del `.p12` |
+| `APPLE_PROVISION_PROFILE_BASE64` | Perfil `.mobileprovision` en base64 (bundle `ar.com.metrogas.demo`) |
+| `APPLE_TEAM_ID` | Team ID (10 caracteres) |
+| `IOS_EXPORT_METHOD` | Opcional: `ad-hoc`, `development`, `app-store-connect`, `enterprise` |
+
+Sin estos secrets el workflow **igual produce** un IPA artifact (unsigned).
+
+### Firma / instalabilidad (honesto)
+
+- **Unsigned IPA (default CI):** útil como build artifact; **no** se instala en un iPhone real sin resignar.
+- **Signed ad-hoc / development:** instalable en devices registrados en el perfil.
+- **App Store:** requiere `IOS_EXPORT_METHOD=app-store-connect` + distribución App Store.
+
+## Publicar este proyecto en GitHub
+
+Si el remoto aún no existe:
+
+```bash
+gh auth login
+gh repo create metrogas-ios --public --source=. --remote=origin --push
+gh workflow run ios-ipa.yml
+```
+
+## Qué incluye la app
 
 | Pantalla | Contenido |
 |---|---|
-| **Inicio** | Logo oficial MetroGAS, próxima factura, próximos vencimientos, métricas, actividad |
-| **Facturas** | Listado con búsqueda y filtros (Todas / Pendientes / Pagadas / Vencidas) |
-| **Detalle** | Monto ARS, período, vencimiento, estado, desglose, notas, marcar como pagada |
-| **Consumo** | Selector 6/12 meses o año actual, gráfico de barras, comparación, historial |
-| **Cuenta** | Perfil demo, recordatorios locales, apariencia, restablecer datos |
+| **Inicio** | Logo oficial MetroGAS, próxima factura, próximos vencimientos, métricas |
+| **Facturas** | Búsqueda y filtros |
+| **Detalle** | ARS, período, vencimiento, desglose, notas, marcar pagada |
+| **Consumo** | Gráficos e historial |
+| **Cuenta** | Perfil demo, recordatorios, apariencia |
 
-Textos, fechas (`es_AR`) y moneda en **ARS**.
+## Marca
 
-## Marca y assets
-
-- Logo oficial descargado de `https://www.metrogas.com.ar/assets/media/2022/08/metrogas-logo.svg`
-- Colores del SVG: `#004cac`, `#00a6dd`, `#ff5200`, `#1a1818`
-- Asset catalog: `MetrogasLogo` (claro/oscuro), `AppIcon`, `BrandBlue` / `BrandCyan` / `BrandFlame`
+- Logo: `https://www.metrogas.com.ar/assets/media/2022/08/metrogas-logo.svg`
+- Colores: `#004cac`, `#00a6dd`, `#ff5200`
 - Proveniencia: `Metrogas/Resources/Brand/SOURCE.txt`
-
-## Recordatorios
-
-- Notificaciones locales el día del vencimiento y N días antes (1–7, por defecto 3)
-- Toggle y preferencias en **Cuenta → Recordatorios**
-- Superficie in-app **Próximos vencimientos** en Inicio
-- Las facturas pendientes/vencidas de demo usan fechas relativas a “hoy”
-
-## Estructura
-
-```
-Metrogas/
-├── Metrogas.xcodeproj
-├── README.md
-└── Metrogas/
-    ├── MetrogasApp.swift
-    ├── Models/
-    ├── Data/          # MockDataStore, formatters, ReminderService
-    ├── Theme/
-    ├── Components/
-    ├── Views/         # Home, Invoices, Consumption, Account, splash
-    └── Resources/
-        ├── Assets.xcassets
-        └── Brand/     # SVG oficial + SOURCE.txt
-```
 
 ## Notas
 
-- Los datos son de demostración y se pueden resetear desde **Cuenta**.
-- Bundle ID: `ar.com.metrogas.demo`
-- No hay integración con la API real de MetroGAS ni Apple Pay.
+- Datos de demostración; Bundle ID: `ar.com.metrogas.demo`
+- Sin API real de MetroGAS ni Apple Pay
