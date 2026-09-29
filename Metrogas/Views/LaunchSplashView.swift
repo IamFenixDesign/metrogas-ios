@@ -7,38 +7,45 @@ struct LaunchSplashView: View {
                 colors: [
                     MetrogasTheme.deepNavy,
                     MetrogasTheme.brandBlue,
-                    MetrogasTheme.brandCyan.opacity(0.85)
+                    MetrogasTheme.brandCyan.opacity(0.9)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
 
-            VStack(spacing: 18) {
+            VStack(spacing: 16) {
                 Image("MetrogasLogo")
                     .resizable()
                     .scaledToFit()
-                    .frame(height: 56)
+                    .frame(height: 52)
                     .colorScheme(.dark)
                     .padding(.horizontal, 48)
-                    .accessibilityLabel("MetroGAS")
 
-                Text("Damos calor")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.85))
+                Text("Oficina Virtual")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
             }
         }
     }
 }
 
 struct RootContainerView: View {
-    @EnvironmentObject private var store: MockDataStore
+    @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var reminders: ReminderService
     @State private var showSplash = true
 
     var body: some View {
         ZStack {
-            RootTabView()
+            Group {
+                if session.isAuthenticated {
+                    RootTabView()
+                        .transition(.opacity)
+                } else {
+                    LoginView()
+                        .transition(.opacity)
+                }
+            }
 
             if showSplash {
                 LaunchSplashView()
@@ -46,22 +53,13 @@ struct RootContainerView: View {
                     .zIndex(1)
             }
         }
+        .animation(.easeInOut(duration: 0.35), value: session.isAuthenticated)
         .task {
             await reminders.refreshAuthorizationStatus()
-            await reminders.reschedule(for: store.invoices)
-            try? await Task.sleep(nanoseconds: 1_100_000_000)
-            withAnimation(.easeOut(duration: 0.45)) {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            withAnimation(.easeOut(duration: 0.4)) {
                 showSplash = false
             }
-        }
-        .onChange(of: store.invoices) { _, newValue in
-            Task { await reminders.reschedule(for: newValue) }
-        }
-        .onChange(of: reminders.remindersEnabled) { _, _ in
-            Task { await reminders.reschedule(for: store.invoices) }
-        }
-        .onChange(of: reminders.daysBeforeDue) { _, _ in
-            Task { await reminders.reschedule(for: store.invoices) }
         }
     }
 }

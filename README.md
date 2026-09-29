@@ -1,103 +1,61 @@
 # MetroGAS (iOS)
 
-App nativa SwiftUI de demostración para gestionar/consultar facturas y consumo de gas natural, con datos mock estilo **MetroGAS Argentina**. Funciona offline, sin autenticación a APIs reales.
+App nativa SwiftUI para acceder a tu **cuenta real** de MetroGAS Argentina mediante la **Oficina Virtual oficial** (`micuenta.metrogas.com.ar`).
 
-## Requisitos (desarrollo local)
+No incluye datos de demostración. Facturas y consumo se consultan en el portal oficial tras iniciar sesión.
 
-- macOS con **Xcode 15+** (recomendado Xcode 16)
-- Simulador iPhone o dispositivo físico con **iOS 17+**
+## Requisitos
 
-## Abrir y ejecutar (Mac + Xcode)
+- macOS con **Xcode 15+** (o el IPA generado por GitHub Actions)
+- iOS 17+
+- Cuenta de Oficina Virtual MetroGAS ([registrarse](https://registro.micuenta.metrogas.com.ar/))
 
-1. Cloná o abrí esta carpeta en tu Mac.
-2. Abrí el proyecto:
-   ```bash
-   open Metrogas.xcodeproj
-   ```
-3. Seleccioná el target **Metrogas** y un simulador → **Run** (⌘R).
-4. La app pide permiso de **notificaciones locales** para recordatorios (también en **Cuenta**).
-
-## Build IPA con GitHub Actions (sin Mac)
-
-Workflow: [`.github/workflows/ios-ipa.yml`](.github/workflows/ios-ipa.yml)
-
-### Qué hace
-
-1. Corre en `macos-14` con Xcode.
-2. Si **no** hay secrets de firma Apple → genera un **IPA unsigned** (artefacto descargable; no se instala en iPhone hasta resignarlo).
-3. Si hay secrets de firma → archive + export firmado (`ad-hoc` por defecto).
-4. Sube el archivo como artifact **`Metrogas-ipa`**.
-
-### Cómo disparar
+## Abrir y ejecutar
 
 ```bash
-# Tras pushear este repo a GitHub:
-gh workflow run ios-ipa.yml
-# o: push a main / cursor/**
+open Metrogas.xcodeproj
 ```
 
-En GitHub: **Actions → Build Metrogas IPA → Run workflow**.
-
-### Cómo descargar el IPA
-
-1. Abrí el run en **Actions**.
-2. Al final del job, sección **Artifacts** → **Metrogas-ipa**.
-3. Descargá el zip y extraé `Metrogas.ipa`.
-
-CLI:
-
-```bash
-gh run list --workflow=ios-ipa.yml
-gh run download <RUN_ID> -n Metrogas-ipa
+Target **Metrogas** → simulador o dispositivo → �
+open Metrogas.xcodeproj
 ```
 
-### Secrets para IPA instalable en dispositivo / App Store
+Target **Metrogas** → simulador o dispositivo → ⌘R.
 
-Ver detalle en [`ci/SIGNING_SECRETS.md`](ci/SIGNING_SECRETS.md).
+1. En la pantalla de acceso tocá **Iniciar sesión**.
+2. Completá el login oficial de MetroGAS (SAP Identity / Oficina Virtual).
+3. Cuando veas tu portal, confirmá con **Ya inicié sesión** si la app no lo detectó sola.
+4. Usá las pestañas Facturas / Consumo para navegar el portal, o los accesos desde Inicio.
 
-| Secret | Uso |
-|---|---|
-| `APPLE_CERTIFICATE_BASE64` | Certificado `.p12` en base64 |
-| `APPLE_CERTIFICATE_PASSWORD` | Password del `.p12` |
-| `APPLE_PROVISION_PROFILE_BASE64` | Perfil `.mobileprovision` en base64 (bundle `ar.com.metrogas.demo`) |
-| `APPLE_TEAM_ID` | Team ID (10 caracteres) |
-| `IOS_EXPORT_METHOD` | Opcional: `ad-hoc`, `development`, `app-store-connect`, `enterprise` |
+## IPA (GitHub Actions)
 
-Sin estos secrets el workflow **igual produce** un IPA artifact (unsigned).
+- Workflow: `.github/workflows/ios-ipa.yml`
+- Release actual (unsigned): https://github.com/IamFenixDesign/metrogas-ios/releases/download/metrogas-demo-ipa/Metrogas.ipa
 
-### Firma / instalabilidad (honesto)
+El IPA por defecto es **unsigned** (no instalable en iPhone real sin resignar). Secrets de firma: `ci/SIGNING_SECRETS.md`.
 
-- **Unsigned IPA (default CI):** útil como build artifact; **no** se instala en un iPhone real sin resignar.
-- **Signed ad-hoc / development:** instalable en devices registrados en el perfil.
-- **App Store:** requiere `IOS_EXPORT_METHOD=app-store-connect` + distribución App Store.
+## Diseño y marca
 
-## Publicar este proyecto en GitHub
+- Logo oficial MetroGAS y colores `#004cac` / `#00a6dd` / `#ff5200`
+- Login brand-forward, splash y shell nativo alrededor del portal
 
-Si el remoto aún no existe:
+## Privacidad / cómo funciona el login
 
-```bash
-gh auth login
-gh repo create metrogas-ios --public --source=. --remote=origin --push
-gh workflow run ios-ipa.yml
+MetroGAS no publica una API abierta para terceros. Esta app:
+
+1. Abre el **login y portal oficiales** en un `WKWebView` seguro.
+2. Conserva la sesión en el almacén web del sistema (cookies del dominio MetroGAS/SAP).
+3. Al **cerrar sesión**, borra esos datos web del dispositivo.
+
+No se inventan facturas ni se usan perfiles ficticios.
+
+## Estructura
+
 ```
-
-## Qué incluye la app
-
-| Pantalla | Contenido |
-|---|---|
-| **Inicio** | Logo oficial MetroGAS, próxima factura, próximos vencimientos, métricas |
-| **Facturas** | Búsqueda y filtros |
-| **Detalle** | ARS, período, vencimiento, desglose, notas, marcar pagada |
-| **Consumo** | Gráficos e historial |
-| **Cuenta** | Perfil demo, recordatorios, apariencia |
-
-## Marca
-
-- Logo: `https://www.metrogas.com.ar/assets/media/2022/08/metrogas-logo.svg`
-- Colores: `#004cac`, `#00a6dd`, `#ff5200`
-- Proveniencia: `Metrogas/Resources/Brand/SOURCE.txt`
-
-## Notas
-
-- Datos de demostración; Bundle ID: `ar.com.metrogas.demo`
-- Sin API real de MetroGAS ni Apple Pay
+Metrogas/
+├── Data/        # AppSession, MetrogasURLs, reminders
+├── Views/Login  # Acceso oficial
+├── Views/Portal # WKWebView Oficina Virtual
+├── Views/Home|Invoices|Consumption|Account
+└── Resources/   # Logo + brand assets
+```

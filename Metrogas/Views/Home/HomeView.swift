@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct HomeView: View {
-    @EnvironmentObject private var store: MockDataStore
+    @EnvironmentObject private var session: AppSession
 
     var body: some View {
         NavigationStack {
@@ -10,11 +10,10 @@ struct HomeView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        brandHero
-                        nextInvoiceCard
-                        UpcomingDueSection()
-                        quickMetrics
-                        recentActivity
+                        hero
+                        sessionCard
+                        actions
+                        infoNote
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 28)
@@ -30,138 +29,147 @@ struct HomeView: View {
                         .accessibilityHidden(true)
                 }
             }
-        }
-    }
-
-    private var brandHero: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            MetrogasLogo(height: 44, alignment: .leading)
-                .frame(maxWidth: 200, alignment: .leading)
-                .padding(.top, 4)
-
-            Text("Tu gas natural en un vistazo")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-
-            Text("Hola, \(store.account.holderName.components(separatedBy: " ").first ?? store.account.holderName)")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.primary)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    @ViewBuilder
-    private var nextInvoiceCard: some View {
-        if let invoice = store.nextDueInvoice {
-            NavigationLink {
-                InvoiceDetailView(invoiceID: invoice.id)
-            } label: {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        Text(invoice.status == .overdue ? "Factura vencida" : "Próximo vencimiento")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.9))
-                        Spacer()
-                        StatusBadge(status: invoice.status)
-                            .colorScheme(.light)
-                    }
-
-                    Text(Formatters.money(invoice.amountARS))
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .monospacedDigit()
-
-                    HStack {
-                        Label(invoice.periodLabel, systemImage: "calendar")
-                        Spacer()
-                        Label(
-                            "Vence \(DateFormatter.metrogasDayMonthYear.string(from: invoice.dueDate))",
-                            systemImage: "bell.fill"
-                        )
-                    }
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.88))
+            .sheet(isPresented: $session.showLoginPortal) {
+                NavigationStack {
+                    MetrogasPortalScreen(title: "Oficina Virtual", url: session.portalStartURL)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Cerrar") { session.showLoginPortal = false }
+                            }
+                        }
                 }
-                .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    MetrogasTheme.deepNavy,
-                                    MetrogasTheme.brandBlue,
-                                    MetrogasTheme.brandCyan.opacity(0.95)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .shadow(color: MetrogasTheme.brandBlue.opacity(0.35), radius: 16, y: 8)
-                )
             }
-            .buttonStyle(.plain)
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Estás al día")
-                    .font(.headline)
-                Text("No hay facturas pendientes en este momento.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(.secondarySystemGroupedBackground))
-            )
         }
     }
 
-    private var quickMetrics: some View {
-        HStack(spacing: 12) {
-            MetricTile(
-                title: "Pendiente",
-                value: Formatters.money(store.totalPendingARS),
-                icon: "dollarsign.circle.fill",
-                accent: MetrogasTheme.brandFlame
-            )
-            MetricTile(
-                title: "Último consumo",
-                value: Formatters.m3(store.latestReading?.cubicMeters ?? 0),
-                icon: "gauge.with.dots.needle.67percent",
-                accent: MetrogasTheme.brandBlue
-            )
-        }
-    }
-
-    private var recentActivity: some View {
+    private var hero: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Actividad reciente", subtitle: "Últimas facturas emitidas")
+            MetrogasLogo(height: 40, alignment: .leading)
+                .frame(maxWidth: 190, alignment: .leading)
+                .padding(.top, 6)
 
-            VStack(spacing: 0) {
-                ForEach(Array(store.invoices.prefix(4))) { invoice in
-                    NavigationLink {
-                        InvoiceDetailView(invoiceID: invoice.id)
-                    } label: {
-                        InvoiceRowView(invoice: invoice, compact: true)
-                    }
-                    .buttonStyle(.plain)
+            Text("Tu cuenta MetroGAS")
+                .font(.system(size: 28, weight: .bold, design: .rounded))
 
-                    if invoice.id != store.invoices.prefix(4).last?.id {
-                        Divider().padding(.leading, 12)
-                    }
-                }
+            Text("Facturas, consumo y trámites con tu usuario real de la Oficina Virtual.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var sessionCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Sesión activa", systemImage: "checkmark.shield.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.92))
+
+            Text("Estás conectado a la Oficina Virtual de MetroGAS.")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.white)
+
+            Text("Los datos de facturación y consumo se muestran desde el portal oficial.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.85))
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            MetrogasTheme.deepNavy,
+                            MetrogasTheme.brandBlue,
+                            MetrogasTheme.brandCyan.opacity(0.95)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .shadow(color: MetrogasTheme.brandBlue.opacity(0.28), radius: 16, y: 8)
+        )
+    }
+
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Accesos", subtitle: "Abrí el portal oficial de MetroGAS")
+
+            actionRow(
+                title: "Ver Oficina Virtual",
+                subtitle: "Inicio de tu cuenta",
+                icon: "house.fill",
+                tint: MetrogasTheme.brandBlue
+            ) {
+                session.openPortal(at: MetrogasURLs.portalMobile)
             }
-            .padding(.vertical, 4)
+
+            actionRow(
+                title: "Facturas y pagos",
+                subtitle: "Consultá y pagá en el portal",
+                icon: "doc.text.fill",
+                tint: MetrogasTheme.brandFlame
+            ) {
+                session.openPortal(at: MetrogasURLs.portalMobile)
+            }
+
+            actionRow(
+                title: "Consumo y lecturas",
+                subtitle: "Historial disponible en Oficina Virtual",
+                icon: "chart.bar.fill",
+                tint: MetrogasTheme.brandCyan
+            ) {
+                session.openPortal(at: MetrogasURLs.portalMobile)
+            }
+        }
+    }
+
+    private func actionRow(
+        title: String,
+        subtitle: String,
+        icon: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(tint.opacity(0.14))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: icon)
+                        .foregroundStyle(tint)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
             .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color(.secondarySystemGroupedBackground))
             )
         }
+        .buttonStyle(.plain)
+    }
+
+    private var infoNote: some View {
+        Text("Esta app no usa datos de demostración. El acceso y la información corresponden a tu cuenta real en micuenta.metrogas.com.ar.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
     }
 }
 
 #Preview {
     HomeView()
-        .environmentObject(MockDataStore())
+        .environmentObject(AppSession())
 }
