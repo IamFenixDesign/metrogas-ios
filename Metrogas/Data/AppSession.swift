@@ -176,6 +176,15 @@ final class AppSession: ObservableObject {
         await WebCookieBridge.clearWebKitData()
     }
 
+    /// Sesión SAP vencida: limpia cookies pero deja el email para reingresar rápido.
+    func expireSession(clearSavedPassword: Bool) async {
+        if clearSavedPassword { CredentialStore.clear() }
+        await forceLocalLogout(keepEmail: true)
+        await MetrogasAuthService.shared.clearCookies()
+        await WebCookieBridge.clearWebKitData()
+        loginError = MetrogasAuthError.sessionExpired.errorDescription
+    }
+
     private func forceLocalLogout(keepEmail: Bool) async {
         let preserved = keepEmail ? loginEmail : nil
         isAuthenticated = false

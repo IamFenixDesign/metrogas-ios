@@ -61,7 +61,7 @@ struct RootContainerView: View {
                     }
                     .transition(.opacity)
                     .zIndex(1)
-                }
+            }
         }
         .animation(.easeInOut(duration: 0.35), value: session.isAuthenticated)
         .task {
@@ -86,7 +86,7 @@ struct RootContainerView: View {
             guard needsReauth else { return }
             Task {
                 store.needsReauthentication = false
-                await session.logout()
+                await session.expireSession(clearSavedPassword: true)
                 store.clear()
             }
         }
