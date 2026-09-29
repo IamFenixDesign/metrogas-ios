@@ -130,14 +130,19 @@ actor MetrogasAuthService {
         // Seguir redirects residuales al portal.
         _ = try await get(MetrogasURLs.portalMobile)
 
-        guard hasMetrogasSessionCookie() || looksAuthenticated(html: html) || await probePortalSession() else {
-            // Último intento: abrir portal y ver si ya no pide login
-            let portal = try await get(MetrogasURLs.portalMobile)
-            if portal.url?.host?.contains("accounts.ondemand.com") == true
-                || htmlContainsPasswordField(String(data: portal.data, encoding: .utf8) ?? "") {
-                throw MetrogasAuthError.invalidCredentials
-            }
+        if hasMetrogasSessionCookie() || looksAuthenticated(html: html) {
             return
+        }
+
+        if await probePortalSession() {
+            return
+        }
+
+        // Último intento: abrir portal y ver si ya no pide login
+        let portal = try await get(MetrogasURLs.portalMobile)
+        if portal.url?.host?.contains("accounts.ondemand.com") == true
+            || htmlContainsPasswordField(String(data: portal.data, encoding: .utf8) ?? "") {
+            throw MetrogasAuthError.invalidCredentials
         }
     }
 

@@ -151,7 +151,7 @@ final class AppSession: ObservableObject {
                 didBootstrapSession = true
                 return true
             }
-            await forceLocalLogout()
+            await forceLocalLogout(keepEmail: true)
             return false
         } catch MetrogasAuthError.sessionExpired {
             await forceLocalLogout(keepEmail: true)
