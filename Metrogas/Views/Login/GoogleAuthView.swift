@@ -1,7 +1,8 @@
 import SwiftUI
 import WebKit
 
-struct PortalWebView: UIViewRepresentable {
+/// WebView mínimo que abre solo el login de Google (OAuth de MetroGAS/SAP).
+struct GoogleAuthView: UIViewRepresentable {
     let url: URL
     var onNavigate: ((URL) -> Void)?
 
@@ -18,8 +19,7 @@ struct PortalWebView: UIViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
-        webView.backgroundColor = .systemBackground
-        webView.isOpaque = false
+        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         context.coordinator.loadIfNeeded(webView, url: url)
         return webView
     }
@@ -62,37 +62,41 @@ struct PortalWebView: UIViewRepresentable {
     }
 }
 
-/// Contenedor nativo alrededor del portal oficial de MetroGAS.
-struct MetrogasPortalScreen: View {
+struct GoogleAuthSheet: View {
     @EnvironmentObject private var session: AppSession
-    let title: String
-    var url: URL = MetrogasURLs.portalMobile
-    var showsConfirmLogin: Bool = false
+    let startURL: URL
 
     @State private var isLoading = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            PortalWebView(url: url) { destination in
-                session.handlePortalNavigation(destination)
-                isLoading = false
+        NavigationStack {
+            ZStack {
+                GoogleAuthView(url: startURL) { destination in
+                    session.handleGoogleAuthNavigation(destination)
+                    let host = destination.host?.lowercased() ?? ""
+                    // Mientras esté en Google / SAP, seguimos; al volver al portal, listo.
+                    if MetrogasURLs.isMetrogasPortalHost(host) {
+                        isLoading = false
+                    } else if host.contains("accounts.google.com") {
+                        isLoading = false
+                    }
+                }
+
+                if isLoading {
+                    ProgressView("Abriendo Google…")
+                        .padding(16)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
             }
-            .background(MetrogasTheme.brandSky.opacity(0.35))
-        }
-        .overlay(alignment: .top) {
-            if isLoading {
-                ProgressView()
-                    .padding(10)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(.top, 8)
+            .navigationTitle("Continuar con Google")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancelar") {
+                        session.cancelGoogleLogin()
+                    }
+                }
             }
-        }
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            // Asegura cookies de la sesión nativa en el WKWebView.
-            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
-            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
         }
     }
 }

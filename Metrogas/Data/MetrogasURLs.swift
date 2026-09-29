@@ -21,6 +21,7 @@ enum MetrogasURLs {
         return h.contains("accounts.ondemand.com")
             || h.contains("authn.br1.hana.ondemand.com")
             || h.contains("login.microsoftonline.com")
+            || h.contains("accounts.google.com")
     }
 
     static func isMetrogasPortalHost(_ host: String) -> Bool {

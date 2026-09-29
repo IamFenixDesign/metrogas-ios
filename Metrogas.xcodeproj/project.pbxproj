@@ -30,6 +30,9 @@
 		A10000000000000000000018 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* AppSession.swift */; };
 		A10000000000000000000019 /* PortalWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000019 /* PortalWebView.swift */; };
 		A1000000000000000000001A /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001A /* LoginView.swift */; };
+		A1000000000000000000001B /* MetrogasAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001B /* MetrogasAuthService.swift */; };
+		A1000000000000000000001C /* WebCookieBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001C /* WebCookieBridge.swift */; };
+		A1000000000000000000001D /* GoogleAuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001D /* GoogleAuthView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -56,6 +59,9 @@
 		B10000000000000000000018 /* AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSession.swift; sourceTree = "<group>"; };
 		B10000000000000000000019 /* PortalWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalWebView.swift; sourceTree = "<group>"; };
 		B1000000000000000000001A /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		B1000000000000000000001B /* MetrogasAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetrogasAuthService.swift; sourceTree = "<group>"; };
+		B1000000000000000000001C /* WebCookieBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebCookieBridge.swift; sourceTree = "<group>"; };
+		B1000000000000000000001D /* GoogleAuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuthView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -117,8 +123,9 @@
 				B10000000000000000000006 /* Formatters.swift */,
 				B10000000000000000000017 /* MetrogasURLs.swift */,
 				B10000000000000000000018 /* AppSession.swift */,
+				B1000000000000000000001B /* MetrogasAuthService.swift */,
+				B1000000000000000000001C /* WebCookieBridge.swift */,
 				B10000000000000000000012 /* ReminderService.swift */,
-			
 			);
 			path = Data;
 			sourceTree = "<group>";
@@ -158,6 +165,7 @@
 			isa = PBXGroup;
 			children = (
 				B1000000000000000000001A /* LoginView.swift */,
+				B1000000000000000000001D /* GoogleAuthView.swift */,
 			);
 			path = Login;
 			sourceTree = "<group>";
@@ -311,11 +319,14 @@
 				A10000000000000000000006 /* Formatters.swift in Sources */,
 				A10000000000000000000017 /* MetrogasURLs.swift in Sources */,
 				A10000000000000000000018 /* AppSession.swift in Sources */,
+				A1000000000000000000001B /* MetrogasAuthService.swift in Sources */,
+				A1000000000000000000001C /* WebCookieBridge.swift in Sources */,
 				A10000000000000000000012 /* ReminderService.swift in Sources */,
 				A10000000000000000000008 /* SharedComponents.swift in Sources */,
 				A10000000000000000000009 /* RootTabView.swift in Sources */,
 				A10000000000000000000013 /* LaunchSplashView.swift in Sources */,
 				A1000000000000000000001A /* LoginView.swift in Sources */,
+				A1000000000000000000001D /* GoogleAuthView.swift in Sources */,
 				A10000000000000000000019 /* PortalWebView.swift in Sources */,
 				A1000000000000000000000A /* HomeView.swift in Sources */,
 				A1000000000000000000000C /* InvoiceListView.swift in Sources */,

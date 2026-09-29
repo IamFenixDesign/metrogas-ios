@@ -9,12 +9,23 @@ final class AppSession: ObservableObject {
         didSet { UserDefaults.standard.set(isAuthenticated, forKey: Keys.authenticated) }
     }
     @Published var appearanceMode: AppearanceMode = .system
+
+    /// Portal post-login (facturas / consumo / cuenta).
     @Published var showLoginPortal = false
     @Published var portalStartURL: URL = MetrogasURLs.portalMobile
     @Published private(set) var lastPortalURL: URL?
 
-    /// True once the user hits SAP Identity / SAML during the current login attempt.
-    private var sawIdentityProvider = false
+    /// Sheet de registro (sigue siendo la web oficial).
+    @Published var showRegistrationPortal = false
+
+    /// Sheet que abre únicamente accounts.google.com.
+    @Published var showGoogleAuth = false
+    @Published var googleAuthURL: URL?
+
+    @Published var isLoggingIn = false
+    @Published var loginError: String?
+
+    private var googleFlowActive = false
 
     enum AppearanceMode: String, CaseIterable, Identifiable {
         case system = "Sistema"
@@ -44,16 +55,76 @@ final class AppSession: ObservableObject {
         }
     }
 
-    func beginLogin() {
-        sawIdentityProvider = false
-        portalStartURL = MetrogasURLs.portalMobile
-        showLoginPortal = true
+    // MARK: - Native login
+
+    func login(email: String, password: String) async {
+        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !password.isEmpty else {
+            loginError = "Ingresá tu email y contraseña."
+            return
+        }
+
+        isLoggingIn = true
+        loginError = nil
+        defer { isLoggingIn = false }
+
+        do {
+            try await MetrogasAuthService.shared.login(email: trimmed, password: password)
+            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            isAuthenticated = true
+        } catch let error as MetrogasAuthError {
+            loginError = error.errorDescription
+        } catch {
+            loginError = "No pudimos iniciar sesión. Revisá tu conexión e intentá de nuevo."
+        }
+    }
+
+    func startGoogleLogin() async {
+        isLoggingIn = true
+        loginError = nil
+        defer { isLoggingIn = false }
+
+        do {
+            let url = try await MetrogasAuthService.shared.prepareGoogleOAuthURL()
+            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            googleAuthURL = url
+            googleFlowActive = true
+            showGoogleAuth = true
+        } catch let error as MetrogasAuthError {
+            loginError = error.errorDescription
+        } catch {
+            loginError = "No pudimos abrir el inicio de sesión con Google."
+        }
+    }
+
+    func handleGoogleAuthNavigation(_ url: URL) {
+        lastPortalURL = url
+        guard googleFlowActive, let host = url.host?.lowercased() else { return }
+
+        // Éxito: Google → SAP → portal MetroGAS.
+        if MetrogasURLs.isMetrogasPortalHost(host) {
+            Task {
+                await WebCookieBridge.syncWebKitCookiesToHTTP()
+                googleFlowActive = false
+                showGoogleAuth = false
+                googleAuthURL = nil
+                isAuthenticated = true
+            }
+        }
+    }
+
+    func cancelGoogleLogin() {
+        googleFlowActive = false
+        showGoogleAuth = false
+        googleAuthURL = nil
+        loginError = nil
     }
 
     func beginRegistration() {
-        sawIdentityProvider = false
         portalStartURL = MetrogasURLs.registro
-        showLoginPortal = true
+        showRegistrationPortal = true
     }
 
     func openPortal(at url: URL = MetrogasURLs.portalMobile) {
@@ -63,49 +134,19 @@ final class AppSession: ObservableObject {
 
     func handlePortalNavigation(_ url: URL) {
         lastPortalURL = url
-        guard let host = url.host?.lowercased() else { return }
-
-        if MetrogasURLs.isMetrogasAuthHost(host) {
-            sawIdentityProvider = true
-            return
-        }
-
-        // Tras pasar por el IdP de MetroGAS/SAP y volver al portal, consideramos sesión real.
-        if sawIdentityProvider && MetrogasURLs.isMetrogasPortalHost(host) {
-            isAuthenticated = true
-        }
-
-        // Si ya estábamos autenticados y volvemos al portal, mantenemos sesión.
-        if isAuthenticated && MetrogasURLs.isMetrogasPortalHost(host) {
-            isAuthenticated = true
-        }
-    }
-
-    func confirmLoggedInManually() {
-        isAuthenticated = true
-        showLoginPortal = false
     }
 
     func logout() async {
         isAuthenticated = false
-        sawIdentityProvider = false
         lastPortalURL = nil
         showLoginPortal = false
+        showGoogleAuth = false
+        googleAuthURL = nil
+        googleFlowActive = false
+        loginError = nil
 
-        let dataStore = WKWebsiteDataStore.default()
-        let types = WKWebsiteDataStore.allWebsiteDataTypes()
-        let records = await dataStore.dataRecords(ofTypes: types)
-        let metrogasRecords = records.filter { record in
-            record.displayName.lowercased().contains("metrogas")
-                || record.displayName.lowercased().contains("ondemand.com")
-                || record.displayName.lowercased().contains("hana.ondemand")
-        }
-        if !metrogasRecords.isEmpty {
-            await dataStore.removeData(ofTypes: types, for: metrogasRecords)
-        } else {
-            // Fallback: clear all web data for a clean session.
-            await dataStore.removeData(ofTypes: types, modifiedSince: .distantPast)
-        }
+        await MetrogasAuthService.shared.clearCookies()
+        await WebCookieBridge.clearWebKitData()
     }
 
     func persistAppearance() {
