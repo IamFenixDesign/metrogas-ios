@@ -18,9 +18,3 @@ struct RootTabView: View {
         .tint(MetrogasTheme.brandBlue)
     }
 }
-
-#Preview {
-    RootTabView()
-        .environmentObject(AppSession())
-        .environmentObject(ReminderService())
-}

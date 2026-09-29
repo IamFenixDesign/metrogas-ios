@@ -1,12 +1,12 @@
 # MetroGAS (iOS)
 
-App nativa SwiftUI para acceder a tu **cuenta real** de MetroGAS Argentina mediante la **Oficina Virtual oficial** (`micuenta.metrogas.com.ar`).
+App nativa SwiftUI para tu cuenta real de MetroGAS Argentina (Oficina Virtual).
 
-No incluye datos de demostración. Facturas y consumo se consultan en el portal oficial tras iniciar sesión.
+Inicio, facturas, consumo y cuenta se muestran **dentro de la app** (SwiftUI). No se embebe el portal web.
 
 ## Requisitos
 
-- macOS con **Xcode 15+** (o el IPA generado por GitHub Actions)
+- macOS con **Xcode 15+** (o el IPA de GitHub Actions)
 - iOS 17+
 - Cuenta de Oficina Virtual MetroGAS ([registrarse](https://registro.micuenta.metrogas.com.ar/))
 
@@ -16,43 +16,34 @@ No incluye datos de demostración. Facturas y consumo se consultan en el portal 
 open Metrogas.xcodeproj
 ```
 
-Target **Metrogas** → simulador o dispositivo → ⌘R.
+1. Ingresá con **email/contraseña** o **Continuar con Google** (abre solo el login de Google).
+2. La app sincroniza facturas/consumo/cuenta con la sesión de Oficina Virtual.
+3. Usá las pestañas nativas: Inicio, Facturas, Consumo, Cuenta.
 
-1. En la pantalla de acceso ingresá **email y contraseña** de MetroGAS, o tocá **Continuar con Google**.
-2. Con Google se abre el login oficial de `accounts.google.com` (no la web completa de MetroGAS).
-3. Tras autenticarte, usá las pestañas Facturas / Consumo / Cuenta para el portal oficial.
-
-## IPA (GitHub Actions)
+## IPA
 
 - Workflow: `.github/workflows/ios-ipa.yml`
-- Release: https://github.com/IamFenixDesign/metrogas-ios/releases/tag/metrogas-demo-ipa
-- Descarga directa: https://github.com/IamFenixDesign/metrogas-ios/releases/download/metrogas-demo-ipa/Metrogas.ipa
+- Descarga: https://github.com/IamFenixDesign/metrogas-ios/releases/download/metrogas-demo-ipa/Metrogas.ipa
 
-El IPA por defecto es **unsigned** (no instalable en iPhone real sin resignar). Secrets de firma: `ci/SIGNING_SECRETS.md`.
+El IPA por defecto es **unsigned**. Firma: `ci/SIGNING_SECRETS.md`.
 
-## Diseño y marca
+## Cómo funciona
 
-- Logo oficial MetroGAS y colores `#004cac` / `#00a6dd` / `#ff5200`
-- Login nativo brand-forward, splash y shell alrededor del portal
+MetroGAS no publica una API abierta. Esta app:
 
-## Privacidad / cómo funciona el login
+1. Autentica de forma nativa contra SAP Identity (email/contraseña) o Google OAuth.
+2. Usa la sesión (cookies) para sincronizar datos hacia pantallas SwiftUI.
+3. Cachea el último sync en el dispositivo.
+4. Al cerrar sesión, borra cookies y caché local.
 
-MetroGAS no publica una API abierta para terceros. Esta app:
-
-1. Hace el **login nativo** contra SAP Identity de MetroGAS (email/contraseña por HTTP).
-2. Para Google, obtiene la URL OAuth oficial y abre **solo** el login de Google.
-3. Comparte la sesión (cookies) con el `WKWebView` del portal.
-4. Al **cerrar sesión**, borra cookies y datos web del dispositivo.
-
-No se inventan facturas ni se usan perfiles ficticios.
+El único WebView restante es el sheet de **Continuar con Google** (obligatorio para OAuth).
 
 ## Estructura
 
 ```
 Metrogas/
-├── Data/        # AppSession, MetrogasAuthService, cookies, URLs
-├── Views/Login  # Login nativo + GoogleAuth
-├── Views/Portal # WKWebView Oficina Virtual
+├── Data/        # Auth, sync, AccountDataStore
+├── Views/Login  # Login nativo + Google
 ├── Views/Home|Invoices|Consumption|Account
-└── Resources/   # Logo + brand assets
+└── Resources/   # Logo + brand
 ```

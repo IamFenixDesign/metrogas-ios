@@ -32,6 +32,7 @@ struct LaunchSplashView: View {
 
 struct RootContainerView: View {
     @EnvironmentObject private var session: AppSession
+    @EnvironmentObject private var store: AccountDataStore
     @EnvironmentObject private var reminders: ReminderService
     @State private var showSplash = true
 
@@ -60,6 +61,21 @@ struct RootContainerView: View {
             withAnimation(.easeOut(duration: 0.4)) {
                 showSplash = false
             }
+        }
+        .onChange(of: session.isAuthenticated) { _, loggedIn in
+            if loggedIn {
+                Task {
+                    await store.refresh(loginHint: session.loginEmail)
+                    await reminders.reschedule(for: store.invoices)
+                }
+            } else {
+                store.clear()
+            }
+        }
+        .task(id: session.isAuthenticated) {
+            guard session.isAuthenticated else { return }
+            await store.refresh(loginHint: session.loginEmail)
+            await reminders.reschedule(for: store.invoices)
         }
     }
 }

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct AccountView: View {
+    @EnvironmentObject private var store: AccountDataStore
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var reminders: ReminderService
     @State private var showLogoutConfirm = false
@@ -14,30 +15,26 @@ struct AccountView: View {
                 List {
                     Section {
                         VStack(spacing: 14) {
-                            MetrogasLogo(height: 34, alignment: .center)
-                                .frame(maxWidth: 170)
-                            Text("Cuenta MetroGAS")
-                                .font(.title3.weight(.semibold))
-                            Text("Sesión vinculada a la Oficina Virtual oficial")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
+                            MetrogasLogo(height: 32, alignment: .center)
+                                .frame(maxWidth: 160)
+                            profileHeader
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
                         .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
                     }
 
-                    Section("Oficina Virtual") {
-                        Button {
-                            session.openPortal()
-                        } label: {
-                            Label("Abrir portal MetroGAS", systemImage: "safari")
-                        }
+                    Section("Suministro") {
+                        labeled("N° de cliente", store.account.customerNumber)
+                        labeled("Medidor", store.account.meterNumber)
+                        labeled("Categoría", store.account.tariffCategory)
+                        labeled("Dirección", store.account.supplyAddress)
+                        labeled("Localidad", store.account.locality)
+                        labeled("CP", store.account.postalCode)
+                    }
 
-                        Link(destination: MetrogasURLs.sitioInstitucional) {
-                            Label("Sitio web metrogas.com.ar", systemImage: "link")
-                        }
+                    Section("Contacto") {
+                        labeled("Email", displayEmail)
+                        labeled("Teléfono", store.account.phone)
                     }
 
                     Section {
@@ -53,15 +50,17 @@ struct AccountView: View {
                         Button("Activar notificaciones") {
                             Task {
                                 let granted = await reminders.requestPermissionIfNeeded()
+                                await reminders.reschedule(for: store.invoices)
                                 permissionMessage = granted
                                     ? "Notificaciones activadas."
                                     : "Revisá el permiso en Ajustes → Metrogas."
                             }
                         }
+                        .disabled(!reminders.remindersEnabled)
                     } header: {
                         Text("Recordatorios")
                     } footer: {
-                        Text("Los avisos locales se pueden usar cuando registres vencimientos desde tu gestión en la Oficina Virtual.")
+                        Text("Avisos locales según tus facturas sincronizadas en la app.")
                     }
 
                     Section("Preferencias") {
@@ -73,6 +72,17 @@ struct AccountView: View {
                         .onChange(of: session.appearanceMode) { _, _ in
                             session.persistAppearance()
                         }
+
+                        Button {
+                            Task { await store.refresh(loginHint: session.loginEmail) }
+                        } label: {
+                            if store.isLoading {
+                                Label("Sincronizando…", systemImage: "arrow.triangle.2.circlepath")
+                            } else {
+                                Label("Sincronizar cuenta", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                        }
+                        .disabled(store.isLoading)
                     }
 
                     Section {
@@ -80,29 +90,28 @@ struct AccountView: View {
                             showLogoutConfirm = true
                         }
                     } footer: {
-                        Text("Al cerrar sesión se eliminan las cookies del portal MetroGAS en este dispositivo.")
+                        Text("Al cerrar sesión se borran cookies y datos sincronizados de este dispositivo.")
                     }
                 }
                 .scrollContentBackground(.hidden)
+                .refreshable {
+                    await store.refresh(loginHint: session.loginEmail)
+                }
             }
             .navigationTitle("Cuenta")
-            .sheet(isPresented: $session.showLoginPortal) {
-                NavigationStack {
-                    MetrogasPortalScreen(title: "Oficina Virtual", url: session.portalStartURL)
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Cerrar") { session.showLoginPortal = false }
-                            }
-                        }
-                }
+            .task {
+                await reminders.refreshAuthorizationStatus()
             }
             .alert("¿Cerrar sesión?", isPresented: $showLogoutConfirm) {
                 Button("Cancelar", role: .cancel) {}
                 Button("Cerrar sesión", role: .destructive) {
-                    Task { await session.logout() }
+                    Task {
+                        store.clear()
+                        await session.logout()
+                    }
                 }
             } message: {
-                Text("Vas a salir de tu cuenta real de MetroGAS en esta app.")
+                Text("Vas a salir de tu cuenta MetroGAS en esta app.")
             }
             .alert("Recordatorios", isPresented: Binding(
                 get: { permissionMessage != nil },
@@ -114,10 +123,61 @@ struct AccountView: View {
             }
         }
     }
-}
 
-#Preview {
-    AccountView()
-        .environmentObject(AppSession())
-        .environmentObject(ReminderService())
+    private var displayEmail: String {
+        if !store.account.email.isEmpty { return store.account.email }
+        if let email = session.loginEmail, !email.isEmpty { return email }
+        return "—"
+    }
+
+    private var profileHeader: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [MetrogasTheme.brandBlue, MetrogasTheme.brandCyan],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ).opacity(0.18)
+                    )
+                    .frame(width: 64, height: 64)
+                Text(initials)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(MetrogasTheme.brandBlue)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(store.account.holderName.isEmpty ? "Cuenta MetroGAS" : store.account.holderName)
+                    .font(.title3.weight(.semibold))
+                Text("Titular del servicio")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+    }
+
+    private var initials: String {
+        let name = store.account.holderName.isEmpty ? "MG" : store.account.holderName
+        let parts = name.split(separator: " ")
+        let letters = parts.prefix(2).compactMap { $0.first.map(String.init) }
+        return letters.joined().uppercased()
+    }
+
+    private func labeled(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.body.weight(.medium))
+        }
+        .padding(.vertical, 2)
+    }
 }

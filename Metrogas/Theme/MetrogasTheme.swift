@@ -11,6 +11,10 @@ enum MetrogasTheme {
 
     static let deepNavy = Color(red: 0.00, green: 0.14, blue: 0.36)
 
+    static let success = Color(red: 0.12, green: 0.55, blue: 0.38)
+    static let warning = Color(red: 0.85, green: 0.52, blue: 0.08)
+    static let danger = Color(red: 0.78, green: 0.22, blue: 0.22)
+
     static var sectionFont: Font {
         .system(.headline, design: .rounded).weight(.semibold)
     }

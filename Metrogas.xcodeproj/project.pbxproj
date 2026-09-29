@@ -28,11 +28,15 @@
 
 		A10000000000000000000017 /* MetrogasURLs.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* MetrogasURLs.swift */; };
 		A10000000000000000000018 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* AppSession.swift */; };
-		A10000000000000000000019 /* PortalWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000019 /* PortalWebView.swift */; };
 		A1000000000000000000001A /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001A /* LoginView.swift */; };
 		A1000000000000000000001B /* MetrogasAuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001B /* MetrogasAuthService.swift */; };
 		A1000000000000000000001C /* WebCookieBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001C /* WebCookieBridge.swift */; };
 		A1000000000000000000001D /* GoogleAuthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001D /* GoogleAuthView.swift */; };
+		A1000000000000000000001E /* AccountDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001E /* AccountDataStore.swift */; };
+		A1000000000000000000001F /* MetrogasDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001F /* MetrogasDataService.swift */; };
+		A10000000000000000000020 /* InvoiceDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* InvoiceDetailView.swift */; };
+		A10000000000000000000021 /* InvoiceRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000021 /* InvoiceRowView.swift */; };
+		A10000000000000000000022 /* UpcomingDueSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000022 /* UpcomingDueSection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -57,11 +61,15 @@
 		C10000000000000000000001 /* Metrogas.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Metrogas.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B10000000000000000000017 /* MetrogasURLs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetrogasURLs.swift; sourceTree = "<group>"; };
 		B10000000000000000000018 /* AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSession.swift; sourceTree = "<group>"; };
-		B10000000000000000000019 /* PortalWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalWebView.swift; sourceTree = "<group>"; };
 		B1000000000000000000001A /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		B1000000000000000000001B /* MetrogasAuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetrogasAuthService.swift; sourceTree = "<group>"; };
 		B1000000000000000000001C /* WebCookieBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebCookieBridge.swift; sourceTree = "<group>"; };
 		B1000000000000000000001D /* GoogleAuthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleAuthView.swift; sourceTree = "<group>"; };
+		B1000000000000000000001E /* AccountDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDataStore.swift; sourceTree = "<group>"; };
+		B1000000000000000000001F /* MetrogasDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetrogasDataService.swift; sourceTree = "<group>"; };
+		B10000000000000000000020 /* InvoiceDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoiceDetailView.swift; sourceTree = "<group>"; };
+		B10000000000000000000021 /* InvoiceRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoiceRowView.swift; sourceTree = "<group>"; };
+		B10000000000000000000022 /* UpcomingDueSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpcomingDueSection.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -123,7 +131,9 @@
 				B10000000000000000000006 /* Formatters.swift */,
 				B10000000000000000000017 /* MetrogasURLs.swift */,
 				B10000000000000000000018 /* AppSession.swift */,
+				B1000000000000000000001E /* AccountDataStore.swift */,
 				B1000000000000000000001B /* MetrogasAuthService.swift */,
+				B1000000000000000000001F /* MetrogasDataService.swift */,
 				B1000000000000000000001C /* WebCookieBridge.swift */,
 				B10000000000000000000012 /* ReminderService.swift */,
 			);
@@ -152,7 +162,6 @@
 				B10000000000000000000009 /* RootTabView.swift */,
 				B10000000000000000000013 /* LaunchSplashView.swift */,
 				E10000000000000000000015 /* Login */,
-				E10000000000000000000016 /* Portal */,
 				E10000000000000000000009 /* Home */,
 				E1000000000000000000000A /* Invoices */,
 				E1000000000000000000000B /* Consumption */,
@@ -170,19 +179,11 @@
 			path = Login;
 			sourceTree = "<group>";
 		};
-		E10000000000000000000016 /* Portal */ = {
-			isa = PBXGroup;
-			children = (
-				B10000000000000000000019 /* PortalWebView.swift */,
-			);
-			path = Portal;
-			sourceTree = "<group>";
-		};
 		E10000000000000000000009 /* Home */ = {
 			isa = PBXGroup;
 			children = (
 				B1000000000000000000000A /* HomeView.swift */,
-			
+				B10000000000000000000022 /* UpcomingDueSection.swift */,
 			);
 			path = Home;
 			sourceTree = "<group>";
@@ -191,7 +192,8 @@
 			isa = PBXGroup;
 			children = (
 				B1000000000000000000000C /* InvoiceListView.swift */,
-			
+				B10000000000000000000020 /* InvoiceDetailView.swift */,
+				B10000000000000000000021 /* InvoiceRowView.swift */,
 			);
 			path = Invoices;
 			sourceTree = "<group>";
@@ -319,7 +321,9 @@
 				A10000000000000000000006 /* Formatters.swift in Sources */,
 				A10000000000000000000017 /* MetrogasURLs.swift in Sources */,
 				A10000000000000000000018 /* AppSession.swift in Sources */,
+				A1000000000000000000001E /* AccountDataStore.swift in Sources */,
 				A1000000000000000000001B /* MetrogasAuthService.swift in Sources */,
+				A1000000000000000000001F /* MetrogasDataService.swift in Sources */,
 				A1000000000000000000001C /* WebCookieBridge.swift in Sources */,
 				A10000000000000000000012 /* ReminderService.swift in Sources */,
 				A10000000000000000000008 /* SharedComponents.swift in Sources */,
@@ -327,9 +331,11 @@
 				A10000000000000000000013 /* LaunchSplashView.swift in Sources */,
 				A1000000000000000000001A /* LoginView.swift in Sources */,
 				A1000000000000000000001D /* GoogleAuthView.swift in Sources */,
-				A10000000000000000000019 /* PortalWebView.swift in Sources */,
 				A1000000000000000000000A /* HomeView.swift in Sources */,
+				A10000000000000000000022 /* UpcomingDueSection.swift in Sources */,
 				A1000000000000000000000C /* InvoiceListView.swift in Sources */,
+				A10000000000000000000020 /* InvoiceDetailView.swift in Sources */,
+				A10000000000000000000021 /* InvoiceRowView.swift in Sources */,
 				A1000000000000000000000E /* ConsumptionView.swift in Sources */,
 				A1000000000000000000000F /* AccountView.swift in Sources */,
 			);

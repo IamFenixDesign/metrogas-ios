@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import WebKit
 import Combine
 
 @MainActor
@@ -9,14 +8,9 @@ final class AppSession: ObservableObject {
         didSet { UserDefaults.standard.set(isAuthenticated, forKey: Keys.authenticated) }
     }
     @Published var appearanceMode: AppearanceMode = .system
-
-    /// Portal post-login (facturas / consumo / cuenta).
-    @Published var showLoginPortal = false
-    @Published var portalStartURL: URL = MetrogasURLs.portalMobile
-    @Published private(set) var lastPortalURL: URL?
-
-    /// Sheet de registro (sigue siendo la web oficial).
-    @Published var showRegistrationPortal = false
+    @Published var loginEmail: String? {
+        didSet { UserDefaults.standard.set(loginEmail, forKey: Keys.loginEmail) }
+    }
 
     /// Sheet que abre únicamente accounts.google.com.
     @Published var showGoogleAuth = false
@@ -45,17 +39,17 @@ final class AppSession: ObservableObject {
     private enum Keys {
         static let authenticated = "metrogas.session.authenticated"
         static let appearance = "metrogas.session.appearance"
+        static let loginEmail = "metrogas.session.loginEmail"
     }
 
     init() {
         isAuthenticated = UserDefaults.standard.bool(forKey: Keys.authenticated)
+        loginEmail = UserDefaults.standard.string(forKey: Keys.loginEmail)
         if let raw = UserDefaults.standard.string(forKey: Keys.appearance),
            let mode = AppearanceMode(rawValue: raw) {
             appearanceMode = mode
         }
     }
-
-    // MARK: - Native login
 
     func login(email: String, password: String) async {
         let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -70,8 +64,7 @@ final class AppSession: ObservableObject {
 
         do {
             try await MetrogasAuthService.shared.login(email: trimmed, password: password)
-            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
-            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            loginEmail = trimmed
             isAuthenticated = true
         } catch let error as MetrogasAuthError {
             loginError = error.errorDescription
@@ -100,10 +93,8 @@ final class AppSession: ObservableObject {
     }
 
     func handleGoogleAuthNavigation(_ url: URL) {
-        lastPortalURL = url
         guard googleFlowActive, let host = url.host?.lowercased() else { return }
 
-        // Éxito: Google → SAP → portal MetroGAS.
         if MetrogasURLs.isMetrogasPortalHost(host) {
             Task {
                 await WebCookieBridge.syncWebKitCookiesToHTTP()
@@ -122,24 +113,9 @@ final class AppSession: ObservableObject {
         loginError = nil
     }
 
-    func beginRegistration() {
-        portalStartURL = MetrogasURLs.registro
-        showRegistrationPortal = true
-    }
-
-    func openPortal(at url: URL = MetrogasURLs.portalMobile) {
-        portalStartURL = url
-        showLoginPortal = true
-    }
-
-    func handlePortalNavigation(_ url: URL) {
-        lastPortalURL = url
-    }
-
     func logout() async {
         isAuthenticated = false
-        lastPortalURL = nil
-        showLoginPortal = false
+        loginEmail = nil
         showGoogleAuth = false
         googleAuthURL = nil
         googleFlowActive = false

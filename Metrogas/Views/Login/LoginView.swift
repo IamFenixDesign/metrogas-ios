@@ -37,30 +37,12 @@ struct LoginView: View {
                 GoogleAuthSheet(startURL: url)
                     .environmentObject(session)
                     .presentationDetents([.large])
-                    .interactiveDismissDisabled(session.isLoggingIn)
             }
-        }
-        .sheet(isPresented: $session.showRegistrationPortal) {
-            NavigationStack {
-                MetrogasPortalScreen(
-                    title: "Registro MetroGAS",
-                    url: MetrogasURLs.registro,
-                    showsConfirmLogin: false
-                )
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cerrar") { session.showRegistrationPortal = false }
-                    }
-                }
-            }
-            .presentationDetents([.large])
         }
         .onAppear {
             withAnimation(.easeOut(duration: 0.65)) { appear = true }
         }
     }
-
-    // MARK: - Sections
 
     private var brandHeader: some View {
         VStack(spacing: 14) {
@@ -123,8 +105,7 @@ struct LoginView: View {
             } label: {
                 HStack {
                     if session.isLoggingIn && !session.showGoogleAuth {
-                        ProgressView()
-                            .tint(.white)
+                        ProgressView().tint(.white)
                     }
                     Text("Ingresar")
                         .font(.headline)
@@ -143,7 +124,6 @@ struct LoginView: View {
                     .foregroundStyle(.white.opacity(0.7))
                 Rectangle().fill(.white.opacity(0.25)).frame(height: 1)
             }
-            .padding(.vertical, 2)
 
             Button {
                 focusedField = nil
@@ -177,13 +157,9 @@ struct LoginView: View {
 
     private var footerLinks: some View {
         VStack(spacing: 12) {
-            Button {
-                session.beginRegistration()
-            } label: {
-                Text("Registrarme en Oficina Virtual")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-            }
+            Link("Registrarme en Oficina Virtual", destination: MetrogasURLs.registro)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
 
             Link("Sitio oficial MetroGAS", destination: MetrogasURLs.sitioInstitucional)
                 .font(.caption.weight(.medium))
@@ -222,9 +198,4 @@ struct LoginView: View {
                 .offset(x: -160, y: 260)
         }
     }
-}
-
-#Preview {
-    LoginView()
-        .environmentObject(AppSession())
 }
