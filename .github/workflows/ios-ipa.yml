@@ -1,0 +1,189 @@
+name: Build Metrogas IPA
+
+on:
+  push:
+    branches: [main, master, "cursor/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ipa:
+    name: Archive & package IPA
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    env:
+      SCHEME: Metrogas
+      PROJECT: Metrogas.xcodeproj
+      CONFIGURATION: Release
+      DERIVED: ${{ github.workspace }}/build
+      ARCHIVE_PATH: ${{ github.workspace }}/build/Metrogas.xcarchive
+      EXPORT_PATH: ${{ github.workspace }}/build/export
+      IPA_OUT: ${{ github.workspace }}/build/Metrogas.ipa
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          for app in \
+            /Applications/Xcode_16.2.app \
+            /Applications/Xcode_16.1.app \
+            /Applications/Xcode_16.0.app \
+            /Applications/Xcode_15.4.app \
+            /Applications/Xcode.app; do
+            if [ -d "$app" ]; then
+              sudo xcode-select -s "$app"
+              break
+            fi
+          done
+          xcodebuild -version
+          xcodebuild -list -project "$PROJECT"
+
+      - name: Resolve signing mode
+        id: signing
+        run: |
+          if [ -n "${{ secrets.APPLE_CERTIFICATE_BASE64 }}" ] && \
+             [ -n "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" ] && \
+             [ -n "${{ secrets.APPLE_PROVISION_PROFILE_BASE64 }}" ] && \
+             [ -n "${{ secrets.APPLE_TEAM_ID }}" ]; then
+            echo "mode=signed" >> "$GITHUB_OUTPUT"
+            echo "Using Apple certificate + provisioning profile from secrets."
+          else
+            echo "mode=unsigned" >> "$GITHUB_OUTPUT"
+            echo "No Apple signing secrets found — building unsigned IPA artifact."
+          fi
+
+      - name: Import Apple signing materials
+        if: steps.signing.outputs.mode == 'signed'
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_PROVISION_PROFILE_BASE64: ${{ secrets.APPLE_PROVISION_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          PP_PATH="$RUNNER_TEMP/profile.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          echo "$APPLE_PROVISION_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          PP_UUID=$(security cms -D -i "$PP_PATH" | plutil -extract UUID raw -)
+          cp "$PP_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PP_UUID.mobileprovision"
+          echo "PROVISION_UUID=$PP_UUID" >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+
+      - name: Build signed archive + export IPA
+        if: steps.signing.outputs.mode == 'signed'
+        env:
+          IOS_EXPORT_METHOD: ${{ secrets.IOS_EXPORT_METHOD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$DERIVED" "$EXPORT_PATH"
+          export METHOD="${IOS_EXPORT_METHOD:-ad-hoc}"
+          python3 -c '
+          import os
+          from pathlib import Path
+          method = os.environ["METHOD"]
+          team = os.environ["APPLE_TEAM_ID"]
+          uuid = os.environ["PROVISION_UUID"]
+          out = Path(os.environ["DERIVED"]) / "ExportOptions.plist"
+          out.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>{method}</string>
+            <key>teamID</key>
+            <string>{team}</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>compileBitcode</key>
+            <false/>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>ar.com.metrogas.demo</key>
+              <string>{uuid}</string>
+            </dict>
+          </dict>
+          </plist>
+          """)
+          # de-indent
+          out.write_text("\n".join(l.lstrip() for l in out.read_text().splitlines()) + "\n")
+          '
+
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE="$PROVISION_UUID" \
+            clean archive
+
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_PATH" \
+            -exportOptionsPlist "$DERIVED/ExportOptions.plist"
+
+          cp "$EXPORT_PATH"/*.ipa "$IPA_OUT"
+      - name: Build unsigned IPA artifact
+        if: steps.signing.outputs.mode == 'unsigned'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/package-unsigned-ipa.sh
+          bash scripts/package-unsigned-ipa.sh \
+            --project "$PROJECT" \
+            --scheme "$SCHEME" \
+            --configuration "$CONFIGURATION" \
+            --out "$IPA_OUT"
+
+      - name: Verify IPA
+        run: |
+          set -euo pipefail
+          ls -lh "$IPA_OUT"
+          file "$IPA_OUT"
+          unzip -l "$IPA_OUT" | head -40
+          test -s "$IPA_OUT"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Metrogas-ipa
+          path: ${{ env.IPA_OUT }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Cleanup keychain
+        if: always() && steps.signing.outputs.mode == 'signed'
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
