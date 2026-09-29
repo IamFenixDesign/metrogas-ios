@@ -1,6 +1,7 @@
 import Foundation
 import WebKit
 
+@MainActor
 enum WebCookieBridge {
     static func syncHTTPCookiesToWebKit(_ cookies: [HTTPCookie]) async {
         let store = WKWebsiteDataStore.default().httpCookieStore

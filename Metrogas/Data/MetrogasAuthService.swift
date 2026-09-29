@@ -65,7 +65,7 @@ actor MetrogasAuthService {
         // Seguir redirects residuales al portal.
         _ = try await get(MetrogasURLs.portalMobile)
 
-        guard await hasMetrogasSessionCookie() || looksAuthenticated(html: html) else {
+        guard hasMetrogasSessionCookie() || looksAuthenticated(html: html) else {
             // Último intento: abrir portal y ver si ya no pide login
             let portal = try await get(MetrogasURLs.portalMobile)
             if portal.url?.host?.contains("accounts.ondemand.com") == true
@@ -89,41 +89,14 @@ actor MetrogasAuthService {
         request.setValue(MetrogasURLs.portalMobile.absoluteString, forHTTPHeaderField: "Referer")
         request.httpBody = formBody(fields)
 
-        // No seguir redirects automáticamente: queremos la URL de Google.
-        let config = URLSessionConfiguration.ephemeral
-        config.httpCookieStorage = cookieJar
-        config.httpCookieAcceptPolicy = .always
-        config.httpShouldSetCookies = true
-        let noFollow = URLSession(
-            configuration: config,
-            delegate: RedirectCaptureDelegate(),
-            delegateQueue: nil
-        )
-        let (data, response) = try await noFollow.data(for: request)
+        let (data, response) = try await session.data(for: request)
         let html = String(data: data, encoding: .utf8) ?? ""
-
-        if let http = response as? HTTPURLResponse,
-           (300...399).contains(http.statusCode),
-           let location = http.value(forHTTPHeaderField: "Location"),
-           let redirect = URL(string: location),
-           redirect.host?.contains("accounts.google.com") == true {
-            return redirect
-        }
 
         if let finalURL = response.url, finalURL.host?.contains("accounts.google.com") == true {
             return finalURL
         }
 
         if let googleURL = extractGoogleOAuthURL(from: html) {
-            return googleURL
-        }
-
-        // Fallback: sesión normal con follow de redirects.
-        let (followedData, followedResponse) = try await session.data(for: request)
-        if let url = followedResponse.url, url.host?.contains("accounts.google.com") == true {
-            return url
-        }
-        if let googleURL = extractGoogleOAuthURL(from: String(data: followedData, encoding: .utf8) ?? "") {
             return googleURL
         }
 

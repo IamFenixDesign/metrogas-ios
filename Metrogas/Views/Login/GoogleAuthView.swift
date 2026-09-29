@@ -49,10 +49,11 @@ struct GoogleAuthView: UIViewRepresentable {
             }
         }
 
+        @MainActor
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+            decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
         ) {
             if let url = navigationAction.request.url {
                 onNavigate?(url)
