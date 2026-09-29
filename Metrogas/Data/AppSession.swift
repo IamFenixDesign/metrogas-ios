@@ -18,8 +18,10 @@ final class AppSession: ObservableObject {
 
     @Published var isLoggingIn = false
     @Published var loginError: String?
+    @Published var isRestoringSession = false
 
     private var googleFlowActive = false
+    private var didBootstrapSession = false
 
     enum AppearanceMode: String, CaseIterable, Identifiable {
         case system = "Sistema"
@@ -64,7 +66,11 @@ final class AppSession: ObservableObject {
 
         do {
             try await MetrogasAuthService.shared.login(email: trimmed, password: password)
+            CredentialStore.save(email: trimmed, password: password)
             loginEmail = trimmed
+            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            didBootstrapSession = true
             isAuthenticated = true
         } catch let error as MetrogasAuthError {
             loginError = error.errorDescription
@@ -101,6 +107,7 @@ final class AppSession: ObservableObject {
                 googleFlowActive = false
                 showGoogleAuth = false
                 googleAuthURL = nil
+                didBootstrapSession = true
                 isAuthenticated = true
             }
         }
@@ -113,16 +120,70 @@ final class AppSession: ObservableObject {
         loginError = nil
     }
 
+    /// Al abrir la app con sesión ya marcada: restaura cookies, revalida y deja lista la sync.
+    /// Devuelve `true` si la sesión quedó usable para sincronizar datos.
+    @discardableResult
+    func restoreSessionIfNeeded() async -> Bool {
+        guard isAuthenticated else { return false }
+        if didBootstrapSession {
+            // Igual revalidamos por si las cookies vencieron en background.
+        }
+
+        isRestoringSession = true
+        defer { isRestoringSession = false }
+
+        // 1) Cookies de un login Google previo pueden estar en WK.
+        await WebCookieBridge.syncWebKitCookiesToHTTP()
+
+        let saved = CredentialStore.load()
+        let email = saved?.email ?? loginEmail
+        let password = saved?.password
+
+        do {
+            let ok = try await MetrogasAuthService.shared.ensureActiveSession(
+                email: email,
+                password: password
+            )
+            if ok {
+                if let email { loginEmail = email }
+                let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+                await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+                didBootstrapSession = true
+                return true
+            }
+            await forceLocalLogout()
+            return false
+        } catch MetrogasAuthError.sessionExpired {
+            await forceLocalLogout(keepEmail: true)
+            loginError = MetrogasAuthError.sessionExpired.errorDescription
+            return false
+        } catch MetrogasAuthError.invalidCredentials {
+            CredentialStore.clear()
+            await forceLocalLogout(keepEmail: true)
+            loginError = "Tu sesión venció. Volvé a ingresar."
+            return false
+        } catch {
+            // Red caída: mantenemos la sesión local y dejamos que sync muestre el error.
+            didBootstrapSession = true
+            return true
+        }
+    }
+
     func logout() async {
+        await forceLocalLogout(keepEmail: false)
+        CredentialStore.clear()
+        await MetrogasAuthService.shared.clearCookies()
+        await WebCookieBridge.clearWebKitData()
+    }
+
+    private func forceLocalLogout(keepEmail: Bool) async {
+        let preserved = keepEmail ? loginEmail : nil
         isAuthenticated = false
-        loginEmail = nil
+        loginEmail = preserved
         showGoogleAuth = false
         googleAuthURL = nil
         googleFlowActive = false
-        loginError = nil
-
-        await MetrogasAuthService.shared.clearCookies()
-        await WebCookieBridge.clearWebKitData()
+        didBootstrapSession = false
     }
 
     func persistAppearance() {

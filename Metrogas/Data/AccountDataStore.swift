@@ -13,6 +13,8 @@ final class AccountDataStore: ObservableObject {
     @Published var isLoading = false
     @Published var lastSync: Date?
     @Published var syncMessage: String?
+    /// La sesión SAP venció y hace falta volver a iniciar sesión.
+    @Published var needsReauthentication = false
 
     private enum Keys {
         static let cache = "metrogas.account.cache.v1"
@@ -103,11 +105,31 @@ final class AccountDataStore: ObservableObject {
     }
 
     func refresh(loginHint: String? = nil) async {
+        guard !isLoading else { return }
         isLoading = true
         syncMessage = nil
         defer { isLoading = false }
 
         if let loginHint { applyLoginHint(email: loginHint) }
+
+        // Revalidar sesión SAP antes de pedir datos (cubre app reabierta con flag local).
+        let saved = CredentialStore.load()
+        do {
+            _ = try await MetrogasAuthService.shared.ensureActiveSession(
+                email: saved?.email ?? loginHint ?? account.email,
+                password: saved?.password
+            )
+        } catch MetrogasAuthError.sessionExpired {
+            syncMessage = MetrogasAuthError.sessionExpired.errorDescription
+            needsReauthentication = true
+            return
+        } catch MetrogasAuthError.invalidCredentials {
+            syncMessage = "Tu sesión venció. Volvé a ingresar."
+            needsReauthentication = true
+            return
+        } catch {
+            // Seguimos: puede ser un glitch de red con cookies aún válidas.
+        }
 
         do {
             let snapshot = try await MetrogasDataService.shared.fetchAccountData(loginHint: loginHint ?? account.email)
@@ -116,8 +138,9 @@ final class AccountDataStore: ObservableObject {
             } else if let loginHint, !loginHint.isEmpty {
                 applyLoginHint(email: loginHint)
             }
-            if !snapshot.invoices.isEmpty { invoices = snapshot.invoices }
-            if !snapshot.readings.isEmpty { readings = snapshot.readings }
+            // Actualizar siempre: evita quedarse con caché vieja tras re-login.
+            invoices = snapshot.invoices
+            readings = snapshot.readings
             lastSync = Date()
             UserDefaults.standard.set(lastSync, forKey: Keys.lastSync)
             persistCache()
@@ -140,6 +163,7 @@ final class AccountDataStore: ObservableObject {
         consumptionPeriod = .last12
         lastSync = nil
         syncMessage = nil
+        needsReauthentication = false
         UserDefaults.standard.removeObject(forKey: Keys.cache)
         UserDefaults.standard.removeObject(forKey: Keys.lastSync)
     }

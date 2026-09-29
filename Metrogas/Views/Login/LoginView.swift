@@ -40,6 +40,9 @@ struct LoginView: View {
             }
         }
         .onAppear {
+            if email.isEmpty, let saved = session.loginEmail {
+                email = saved
+            }
             withAnimation(.easeOut(duration: 0.65)) { appear = true }
         }
     }

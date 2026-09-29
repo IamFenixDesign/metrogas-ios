@@ -6,6 +6,7 @@ enum MetrogasAuthError: LocalizedError {
     case unexpectedResponse
     case googleStartFailed
     case cancelled
+    case sessionExpired
 
     var errorDescription: String? {
         switch self {
@@ -19,6 +20,8 @@ enum MetrogasAuthError: LocalizedError {
             return "No pudimos abrir el inicio de sesión con Google."
         case .cancelled:
             return "Inicio de sesión cancelado."
+        case .sessionExpired:
+            return "Tu sesión venció. Volvé a iniciar sesión."
         }
     }
 }
@@ -45,6 +48,68 @@ actor MetrogasAuthService {
     // MARK: - Public
 
     func login(email: String, password: String) async throws {
+        try await performCredentialLogin(email: email, password: password)
+    }
+
+    /// Revalida la sesión del portal. Si venció y hay credenciales, re-loguea en silencio.
+    @discardableResult
+    func ensureActiveSession(email: String?, password: String?) async throws -> Bool {
+        if await probePortalSession() {
+            return true
+        }
+
+        // Si todavía hay cookies de sesión, un fallo de probe puede ser red/transitorio.
+        let hadCookies = hasMetrogasSessionCookie()
+
+        if let email, let password, !email.isEmpty, !password.isEmpty {
+            do {
+                try await performCredentialLogin(email: email, password: password)
+                if await probePortalSession() { return true }
+            } catch MetrogasAuthError.invalidCredentials {
+                throw MetrogasAuthError.invalidCredentials
+            } catch {
+                if hadCookies { return true }
+                throw error
+            }
+        }
+
+        if hadCookies {
+            // Mantener sesión local; el fetch de datos dirá si realmente murió.
+            return true
+        }
+
+        throw MetrogasAuthError.sessionExpired
+    }
+
+    /// True si el portal responde con shell autenticado (no pantalla de login).
+    func probePortalSession() async -> Bool {
+        do {
+            var html = try await loadPortalHTML()
+            for _ in 0..<5 {
+                if looksLikeAuthenticatedPortal(html: html, urlHint: nil) {
+                    return true
+                }
+                if htmlContainsUsernameField(html) || htmlContainsPasswordField(html) {
+                    return false
+                }
+                guard let action = firstFormAction(in: html) else { break }
+                let fields = extractFormFields(from: html)
+                let result = try await post(action, fields: fields)
+                html = String(data: result.data, encoding: .utf8) ?? ""
+                if looksLikeAuthenticatedPortal(html: html, urlHint: result.url) {
+                    return true
+                }
+                if htmlContainsUsernameField(html) || htmlContainsPasswordField(html) {
+                    return false
+                }
+            }
+            return hasMetrogasSessionCookie() && !htmlContainsUsernameField(html)
+        } catch {
+            return false
+        }
+    }
+
+    private func performCredentialLogin(email: String, password: String) async throws {
         try await bootstrapLoginPage()
         var html = try await currentLoginHTML()
 
@@ -65,7 +130,7 @@ actor MetrogasAuthService {
         // Seguir redirects residuales al portal.
         _ = try await get(MetrogasURLs.portalMobile)
 
-        guard hasMetrogasSessionCookie() || looksAuthenticated(html: html) else {
+        guard hasMetrogasSessionCookie() || looksAuthenticated(html: html) || await probePortalSession() else {
             // Último intento: abrir portal y ver si ya no pide login
             let portal = try await get(MetrogasURLs.portalMobile)
             if portal.url?.host?.contains("accounts.ondemand.com") == true
@@ -74,6 +139,29 @@ actor MetrogasAuthService {
             }
             return
         }
+    }
+
+    private func loadPortalHTML() async throws -> String {
+        let portal = try await get(MetrogasURLs.portalMobile)
+        return String(data: portal.data, encoding: .utf8) ?? ""
+    }
+
+    private func looksLikeAuthenticatedPortal(html: String, urlHint: URL?) -> Bool {
+        if let host = urlHint?.host?.lowercased(),
+           MetrogasURLs.isMetrogasPortalHost(host),
+           !htmlContainsUsernameField(html),
+           !htmlContainsPasswordField(html) {
+            return true
+        }
+        let lowered = html.lowercased()
+        if htmlContainsUsernameField(html) || htmlContainsPasswordField(html) {
+            return false
+        }
+        return lowered.contains("sap-ui")
+            || lowered.contains("flp")
+            || lowered.contains("ovmetrogas")
+            || lowered.contains("shell-home")
+            || looksAuthenticated(html: html)
     }
 
     /// Prepara la URL de Google OAuth usada por MetroGAS/SAP Identity.
