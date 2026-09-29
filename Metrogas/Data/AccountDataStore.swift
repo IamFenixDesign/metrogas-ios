@@ -145,7 +145,7 @@ final class AccountDataStore: ObservableObject {
             UserDefaults.standard.set(lastSync, forKey: Keys.lastSync)
             persistCache()
             if snapshot.invoices.isEmpty && snapshot.readings.isEmpty {
-                syncMessage = "Sesión activa. Todavía no encontramos facturas o consumo para mostrar. Deslizá para reintentar."
+                syncMessage = "Sesión activa, pero la Oficina Virtual no devolvió facturas/consumo todavía. Deslizá para reintentar en unos segundos."
             } else {
                 syncMessage = nil
             }
