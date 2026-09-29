@@ -32,11 +32,11 @@ El IPA por defecto es **unsigned**. Firma: `ci/SIGNING_SECRETS.md`.
 MetroGAS no publica una API abierta. Esta app:
 
 1. Autentica de forma nativa contra SAP Identity (email/contraseña) o Google OAuth.
-2. Usa la sesión (cookies) para sincronizar datos hacia pantallas SwiftUI.
+2. Sincroniza contra **OvServiceHub (M360)** y, si hace falta, captura las respuestas reales del portal UI5 (bridge oculto) para llenar pantallas SwiftUI.
 3. Cachea el último sync en el dispositivo.
 4. Al cerrar sesión, borra cookies y caché local.
 
-El único WebView restante es el sheet de **Continuar con Google** (obligatorio para OAuth).
+WebViews: sheet de **Continuar con Google** (OAuth) y un bridge oculto solo para sync de datos (la UI sigue nativa).
 
 ## Estructura
 
