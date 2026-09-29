@@ -16,10 +16,6 @@ No incluye datos de demostración. Facturas y consumo se consultan en el portal 
 open Metrogas.xcodeproj
 ```
 
-Target **Metrogas** → simulador o dispositivo → �
-open Metrogas.xcodeproj
-```
-
 Target **Metrogas** → simulador o dispositivo → ⌘R.
 
 1. En la pantalla de acceso tocá **Iniciar sesión**.
@@ -30,7 +26,8 @@ Target **Metrogas** → simulador o dispositivo → ⌘R.
 ## IPA (GitHub Actions)
 
 - Workflow: `.github/workflows/ios-ipa.yml`
-- Release actual (unsigned): https://github.com/IamFenixDesign/metrogas-ios/releases/download/metrogas-demo-ipa/Metrogas.ipa
+- Release: https://github.com/IamFenixDesign/metrogas-ios/releases/tag/metrogas-demo-ipa
+- Descarga directa: https://github.com/IamFenixDesign/metrogas-ios/releases/download/metrogas-demo-ipa/Metrogas.ipa
 
 El IPA por defecto es **unsigned** (no instalable en iPhone real sin resignar). Secrets de firma: `ci/SIGNING_SECRETS.md`.
 

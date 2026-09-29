@@ -52,6 +52,10 @@
 		B10000000000000000000015 /* metrogas-logo.svg */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = "metrogas-logo.svg"; sourceTree = "<group>"; };
 		B10000000000000000000016 /* SOURCE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = SOURCE.txt; sourceTree = "<group>"; };
 		C10000000000000000000001 /* Metrogas.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Metrogas.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000017 /* MetrogasURLs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetrogasURLs.swift; sourceTree = "<group>"; };
+		B10000000000000000000018 /* AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSession.swift; sourceTree = "<group>"; };
+		B10000000000000000000019 /* PortalWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalWebView.swift; sourceTree = "<group>"; };
+		B1000000000000000000001A /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
