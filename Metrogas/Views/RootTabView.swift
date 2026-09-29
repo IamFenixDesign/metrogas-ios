@@ -26,10 +26,12 @@ struct RootTabView: View {
                 }
         }
         .tint(MetrogasTheme.brandBlue)
+        .toolbarBackground(.ultraThinMaterial, for: .tabBar)
     }
 }
 
 #Preview {
     RootTabView()
         .environmentObject(MockDataStore())
+        .environmentObject(ReminderService())
 }

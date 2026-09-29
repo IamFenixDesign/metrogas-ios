@@ -12,6 +12,7 @@ struct HomeView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         brandHero
                         nextInvoiceCard
+                        UpcomingDueSection()
                         quickMetrics
                         recentActivity
                     }
@@ -20,37 +21,27 @@ struct HomeView: View {
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Image("MetrogasLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 22)
+                        .accessibilityHidden(true)
+                }
+            }
         }
     }
 
     private var brandHero: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [MetrogasTheme.brandBlue, MetrogasTheme.brandFlame],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 52, height: 52)
-                    Image(systemName: "flame.fill")
-                        .foregroundStyle(.white)
-                        .font(.title2.weight(.bold))
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            MetrogasLogo(height: 44, alignment: .leading)
+                .frame(maxWidth: 200, alignment: .leading)
+                .padding(.top, 4)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Metrogas")
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.primary)
-                    Text("Tu gas natural en un vistazo")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.top, 8)
+            Text("Tu gas natural en un vistazo")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
 
             Text("Hola, \(store.account.holderName.components(separatedBy: " ").first ?? store.account.holderName)")
                 .font(.title3.weight(.semibold))
@@ -85,7 +76,7 @@ struct HomeView: View {
                         Spacer()
                         Label(
                             "Vence \(DateFormatter.metrogasDayMonthYear.string(from: invoice.dueDate))",
-                            systemImage: "clock"
+                            systemImage: "bell.fill"
                         )
                     }
                     .font(.caption.weight(.medium))
@@ -98,7 +89,8 @@ struct HomeView: View {
                             LinearGradient(
                                 colors: [
                                     MetrogasTheme.deepNavy,
-                                    MetrogasTheme.brandBlue
+                                    MetrogasTheme.brandBlue,
+                                    MetrogasTheme.brandCyan.opacity(0.95)
                                 ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing

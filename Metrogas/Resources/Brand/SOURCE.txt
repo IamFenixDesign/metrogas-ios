@@ -1,0 +1,6 @@
+MetroGAS Argentina logo sourced from the official public website:
+https://www.metrogas.com.ar/assets/media/2022/08/metrogas-logo.svg
+(also published at https://www.metrogas.com.ar/assets/themes/metrogas/dist/img/metrogas-logo.svg)
+
+Downloaded for demo branding in this offline sample app.
+Brand colors from the SVG fills: #004cac, #00a6dd, #ff5200, #1a1818.

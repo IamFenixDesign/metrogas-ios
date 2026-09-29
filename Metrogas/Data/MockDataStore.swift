@@ -54,10 +54,14 @@ final class MockDataStore: ObservableObject {
     }
 
     var nextDueInvoice: Invoice? {
+        upcomingDueInvoices.first
+    }
+
+    /// Unpaid invoices sorted by soonest due date (overdue first).
+    var upcomingDueInvoices: [Invoice] {
         invoices
             .filter { $0.status == .pending || $0.status == .overdue }
             .sorted { $0.dueDate < $1.dueDate }
-            .first
     }
 
     var totalPendingARS: Decimal {
@@ -128,23 +132,61 @@ extension MockDataStore {
             return (start, end)
         }
 
-        let items: [(String, Int, Int, Int, Int, Int, Decimal, InvoiceStatus, Double, String, InvoiceBreakdown)] = [
-            ("F-2026-0912", 2026, 8, 15, 9, 5, 48_920.55, .pending, 112.4, "", InvoiceBreakdown(cargoFijo: 8_450, cargoVariable: 31_200.55, impuestos: 7_870, otros: 1_400)),
-            ("F-2026-0831", 2026, 7, 15, 8, 5, 41_780.00, .overdue, 98.2, "Recordatorio enviado por mail", InvoiceBreakdown(cargoFijo: 8_450, cargoVariable: 25_110, impuestos: 6_820, otros: 1_400)),
-            ("F-2026-0728", 2026, 6, 15, 7, 5, 52_340.80, .paid, 128.6, "Pagada con débito automático", InvoiceBreakdown(cargoFijo: 8_450, cargoVariable: 34_890.80, impuestos: 7_600, otros: 1_400)),
-            ("F-2026-0619", 2026, 5, 15, 6, 5, 39_210.40, .paid, 91.0, "", InvoiceBreakdown(cargoFijo: 8_200, cargoVariable: 23_410.40, impuestos: 6_200, otros: 1_400)),
-            ("F-2026-0511", 2026, 4, 15, 5, 5, 36_890.15, .paid, 84.7, "", InvoiceBreakdown(cargoFijo: 8_200, cargoVariable: 21_490.15, impuestos: 5_800, otros: 1_400)),
-            ("F-2026-0402", 2026, 3, 15, 4, 5, 44_560.00, .paid, 105.3, "", InvoiceBreakdown(cargoFijo: 8_200, cargoVariable: 28_160, impuestos: 6_800, otros: 1_400)),
-            ("F-2026-0308", 2026, 2, 15, 3, 5, 58_120.75, .paid, 141.8, "Invierno – calefacción", InvoiceBreakdown(cargoFijo: 8_200, cargoVariable: 40_320.75, impuestos: 8_200, otros: 1_400)),
-            ("F-2026-0214", 2026, 1, 15, 2, 5, 61_450.30, .paid, 149.2, "", InvoiceBreakdown(cargoFijo: 7_950, cargoVariable: 43_100.30, impuestos: 9_000, otros: 1_400)),
-            ("F-2025-1218", 2025, 12, 15, 1, 5, 55_980.00, .paid, 136.5, "", InvoiceBreakdown(cargoFijo: 7_950, cargoVariable: 38_230, impuestos: 8_400, otros: 1_400)),
-            ("F-2025-1109", 2025, 11, 15, 12, 5, 42_110.60, .paid, 99.4, "", InvoiceBreakdown(cargoFijo: 7_950, cargoVariable: 26_560.60, impuestos: 6_200, otros: 1_400)),
-            ("F-2025-1015", 2025, 10, 15, 11, 5, 38_740.20, .paid, 88.1, "", InvoiceBreakdown(cargoFijo: 7_700, cargoVariable: 23_840.20, impuestos: 5_800, otros: 1_400)),
-            ("F-2025-0922", 2025, 9, 15, 10, 5, 35_220.00, .paid, 79.6, "", InvoiceBreakdown(cargoFijo: 7_700, cargoVariable: 20_920, impuestos: 5_200, otros: 1_400)),
+        // Paid history uses fixed calendar months; unpaid dues are relative to "today"
+        // so reminders and "próximos vencimientos" stay demoable.
+        let today = Date()
+        let pendingDue = calendar.date(byAdding: .day, value: 5, to: calendar.startOfDay(for: today)) ?? today
+        let overdueDue = calendar.date(byAdding: .day, value: -12, to: calendar.startOfDay(for: today)) ?? today
+
+        let paidItems: [(String, Int, Int, Int, Int, Int, Decimal, Double, String, InvoiceBreakdown)] = [
+            ("F-2026-0728", 2026, 6, 15, 7, 5, 52_340.80, 128.6, "Pagada con débito automático", InvoiceBreakdown(cargoFijo: 8_450, cargoVariable: 34_890.80, impuestos: 7_600, otros: 1_400)),
+            ("F-2026-0619", 2026, 5, 15, 6, 5, 39_210.40, 91.0, "", InvoiceBreakdown(cargoFijo: 8_200, cargoVariable: 23_410.40, impuestos: 6_200, otros: 1_400)),
+            ("F-2026-0511", 2026, 4, 15, 5, 5, 36_890.15, 84.7, "", InvoiceBreakdown(cargoFijo: 8_200, cargoVariable: 21_490.15, impuestos: 5_800, otros: 1_400)),
+            ("F-2026-0402", 2026, 3, 15, 4, 5, 44_560.00, 105.3, "", InvoiceBreakdown(cargoFijo: 8_200, cargoVariable: 28_160, impuestos: 6_800, otros: 1_400)),
+            ("F-2026-0308", 2026, 2, 15, 3, 5, 58_120.75, 141.8, "Invierno – calefacción", InvoiceBreakdown(cargoFijo: 8_200, cargoVariable: 40_320.75, impuestos: 8_200, otros: 1_400)),
+            ("F-2026-0214", 2026, 1, 15, 2, 5, 61_450.30, 149.2, "", InvoiceBreakdown(cargoFijo: 7_950, cargoVariable: 43_100.30, impuestos: 9_000, otros: 1_400)),
+            ("F-2025-1218", 2025, 12, 15, 1, 5, 55_980.00, 136.5, "", InvoiceBreakdown(cargoFijo: 7_950, cargoVariable: 38_230, impuestos: 8_400, otros: 1_400)),
+            ("F-2025-1109", 2025, 11, 15, 12, 5, 42_110.60, 99.4, "", InvoiceBreakdown(cargoFijo: 7_950, cargoVariable: 26_560.60, impuestos: 6_200, otros: 1_400)),
+            ("F-2025-1015", 2025, 10, 15, 11, 5, 38_740.20, 88.1, "", InvoiceBreakdown(cargoFijo: 7_700, cargoVariable: 23_840.20, impuestos: 5_800, otros: 1_400)),
+            ("F-2025-0922", 2025, 9, 15, 10, 5, 35_220.00, 79.6, "", InvoiceBreakdown(cargoFijo: 7_700, cargoVariable: 20_920, impuestos: 5_200, otros: 1_400)),
         ]
 
-        return items.map { item in
-            let (number, year, month, issueDay, dueMonth, dueDay, amount, status, m3, notes, breakdown) = item
+        let pendingPeriod = period(year: 2026, month: 8)
+        let overduePeriod = period(year: 2026, month: 7)
+
+        var result: [Invoice] = [
+            Invoice(
+                id: "F-2026-0912",
+                number: "F-2026-0912",
+                periodStart: pendingPeriod.0,
+                periodEnd: pendingPeriod.1,
+                dueDate: pendingDue,
+                issuedDate: Calendar.metrogasDate(year: 2026, month: 8, day: 15),
+                amountARS: 48_920.55,
+                status: .pending,
+                consumptionM3: 112.4,
+                supplyPoint: "Caballito – MG-882941",
+                notes: "",
+                breakdown: InvoiceBreakdown(cargoFijo: 8_450, cargoVariable: 31_200.55, impuestos: 7_870, otros: 1_400)
+            ),
+            Invoice(
+                id: "F-2026-0831",
+                number: "F-2026-0831",
+                periodStart: overduePeriod.0,
+                periodEnd: overduePeriod.1,
+                dueDate: overdueDue,
+                issuedDate: Calendar.metrogasDate(year: 2026, month: 7, day: 15),
+                amountARS: 41_780.00,
+                status: .overdue,
+                consumptionM3: 98.2,
+                supplyPoint: "Caballito – MG-882941",
+                notes: "Recordatorio enviado por mail",
+                breakdown: InvoiceBreakdown(cargoFijo: 8_450, cargoVariable: 25_110, impuestos: 6_820, otros: 1_400)
+            ),
+        ]
+
+        result += paidItems.map { item in
+            let (number, year, month, issueDay, dueMonth, dueDay, amount, m3, notes, breakdown) = item
             let (start, end) = period(year: year, month: month)
             let dueYear = dueMonth == 1 && month == 12 ? year + 1 : year
             return Invoice(
@@ -155,13 +197,14 @@ extension MockDataStore {
                 dueDate: Calendar.metrogasDate(year: dueYear, month: dueMonth, day: dueDay),
                 issuedDate: Calendar.metrogasDate(year: year, month: month, day: issueDay),
                 amountARS: amount,
-                status: status,
+                status: .paid,
                 consumptionM3: m3,
                 supplyPoint: "Caballito – MG-882941",
                 notes: notes,
                 breakdown: breakdown
             )
         }
+        return result
     }
 
     static var sampleReadings: [ConsumptionReading] {

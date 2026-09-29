@@ -40,6 +40,15 @@ struct InvoiceListView: View {
             }
             .navigationTitle("Facturas")
             .searchable(text: $store.searchText, prompt: "Buscar por número o período")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Image("MetrogasLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 18)
+                        .accessibilityHidden(true)
+                }
+            }
         }
     }
 

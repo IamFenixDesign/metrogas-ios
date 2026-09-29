@@ -70,7 +70,7 @@ struct ConsumptionView: View {
                     )
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [MetrogasTheme.brandBlue, MetrogasTheme.brandFlame.opacity(0.85)],
+                            colors: [MetrogasTheme.brandBlue, MetrogasTheme.brandCyan],
                             startPoint: .bottom,
                             endPoint: .top
                         )
