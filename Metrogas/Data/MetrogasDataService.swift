@@ -23,38 +23,23 @@ actor MetrogasDataService {
             return identity.email
         }()
 
-        // Hint: solo vínculo confirmado. Nunca scrapes de cookies/HTML.
+        // Esperar sesión de portal usable (crítico tras Google OAuth).
+        for _ in 0..<8 {
+            if await MetrogasAuthService.shared.probePortalSession() { break }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
+
+        // Hint: solo vínculo confirmado. Nunca scrapes.
         let preferredHint = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "")
             ?? LinkedAccountStore.customerNumber(forEmail: email)
 
-        // Siempre discovery en portal autenticado; el hint solo gana si aparece ahí.
-        var snapshot = try await PortalDataBridge.shared.syncFromSession(
+        // Discovery siempre; preferred solo si el portal lo lista como candidato.
+        let snapshot = try await PortalDataBridge.shared.syncFromSession(
             loginHint: email,
             preferredAccountId: preferredHint,
             forcePortalDiscovery: true,
-            timeoutSeconds: 32
+            timeoutSeconds: 40
         )
-
-        let billingId = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber)
-        let hasProfile = !snapshot.account.holderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasAddress = !snapshot.account.supplyAddress.isEmpty && snapshot.account.supplyAddress != "—"
-        let hasInvoices = !snapshot.invoices.isEmpty
-        let confirmed = billingId != nil && (hasProfile || hasAddress || hasInvoices)
-
-        // Si el hint no coincide con lo que billing/discovery confirmó → soltar veneno.
-        if let preferredHint, let billingId, preferredHint != billingId, confirmed {
-            LinkedAccountStore.unbind(email: email)
-        }
-        if let preferredHint, !confirmed {
-            LinkedAccountStore.unbind(email: email)
-            // Reintentar discovery puro (sin hint) una vez.
-            snapshot = try await PortalDataBridge.shared.syncFromSession(
-                loginHint: email,
-                preferredAccountId: nil,
-                forcePortalDiscovery: true,
-                timeoutSeconds: 32
-            )
-        }
 
         var account = seedAccount(loginHint: email, customerNumber: nil)
         account = MetrogasJSONParser.mergeAccount(account, snapshot.account)
@@ -63,19 +48,24 @@ actor MetrogasDataService {
         let finalProfile = !snapshot.account.holderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let finalAddress = !snapshot.account.supplyAddress.isEmpty && snapshot.account.supplyAddress != "—"
         let finalInvoices = !snapshot.invoices.isEmpty
-        let finalConfirmed = finalId != nil && (finalProfile || finalAddress || finalInvoices)
-
-        if let finalId, finalConfirmed {
-            account.customerNumber = finalId
-            LinkedAccountStore.bind(email: email, customerNumber: finalId)
-        } else {
-            account.customerNumber = "—"
-            if let email { LinkedAccountStore.unbind(email: email) }
-        }
+        let ownershipOK = emailOwnershipAllowsBind(loginHint: email, accountEmail: snapshot.account.email)
+        let finalConfirmed = finalId != nil
+            && (finalProfile || finalAddress || finalInvoices)
+            && ownershipOK
 
         if let email, !email.isEmpty {
             account.email = email
         }
+
+        guard let finalId, finalConfirmed else {
+            account.customerNumber = "—"
+            if let email { LinkedAccountStore.unbind(email: email) }
+            // Sin confirmación de sesión/email: no mostrar datos ajenos.
+            return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
+        }
+
+        account.customerNumber = finalId
+        LinkedAccountStore.bind(email: email, customerNumber: finalId)
 
         var invoices = snapshot.invoices
         var readings = snapshot.readings
@@ -84,6 +74,17 @@ actor MetrogasDataService {
         }
 
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+    }
+
+    /// Si hay email de login y email de cuenta/subscription, deben coincidir.
+    private func emailOwnershipAllowsBind(loginHint: String?, accountEmail: String) -> Bool {
+        let login = loginHint?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let account = accountEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard login.contains("@"), account.contains("@") else {
+            // Sin email de cuenta no podemos negar; discovery de sesión ya filtró candidatos.
+            return true
+        }
+        return login == account
     }
 
     private func seedAccount(loginHint: String?, customerNumber: String?) -> AccountProfile {

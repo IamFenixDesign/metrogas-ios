@@ -26,8 +26,11 @@ final class AppSession: ObservableObject {
 
     @Published var isLoggingIn = false
     @Published var loginError: String?
+    /// Google OAuth terminó y estamos confirmando la sesión del portal.
+    @Published var isConfirmingGoogleSession = false
 
     private var googleFlowActive = false
+    private var googleCompletionStarted = false
     private var didBootstrapSession = false
 
     private var loginHintMissing: Bool {
@@ -142,6 +145,8 @@ final class AppSession: ObservableObject {
             await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
             googleAuthURL = url
             googleFlowActive = true
+            googleCompletionStarted = false
+            isConfirmingGoogleSession = false
             showGoogleAuth = true
         } catch let error as MetrogasAuthError {
             loginError = error.errorDescription
@@ -169,6 +174,8 @@ final class AppSession: ObservableObject {
             await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
             googleAuthURL = url
             googleFlowActive = true
+            googleCompletionStarted = false
+            isConfirmingGoogleSession = false
             showGoogleAuth = true
         } catch let error as MetrogasAuthError {
             loginError = error.errorDescription
@@ -181,6 +188,7 @@ final class AppSession: ObservableObject {
         guard googleFlowActive, let host = url.host?.lowercased() else { return }
 
         // Capturar email desde la URL de Google apenas aparece (login_hint / Email).
+        // No cerrar el sheet acá: el usuario puede elegir otra cuenta.
         if host.contains("accounts.google.com") || host.contains("google.com") {
             if let email = MetrogasAuthService.emailFromOAuthURL(url) {
                 loginEmail = email
@@ -188,34 +196,72 @@ final class AppSession: ObservableObject {
             return
         }
 
-        if MetrogasURLs.isMetrogasPortalHost(host) {
-            Task {
+        // Solo portal/acceso autenticados. Ignorar saldos (app pública) y redirects a medias.
+        guard MetrogasURLs.isAuthenticatedSessionHost(host) else { return }
+        guard !googleCompletionStarted else { return }
+        googleCompletionStarted = true
+        isConfirmingGoogleSession = true
+        isLoggingIn = true
+
+        Task {
+            defer {
+                isConfirmingGoogleSession = false
+                isLoggingIn = false
+            }
+
+            // Esperar a que las cookies SAML/SAP terminen de aterrizar.
+            var sessionReady = false
+            for _ in 0..<24 {
+                guard googleFlowActive else { return }
                 await WebCookieBridge.syncWebKitCookiesToHTTP()
-                // Re-resolver email Google/SAP. El N° de cliente lo confirma el sync M360.
-                var resolvedEmail = loginEmail
-                for _ in 0..<6 {
-                    let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
-                    if let email = identity.email, !email.isEmpty {
-                        resolvedEmail = email
-                        break
-                    }
-                    try? await Task.sleep(nanoseconds: 300_000_000)
+                if await MetrogasAuthService.shared.probePortalSession() {
+                    sessionReady = true
+                    break
                 }
-                if let resolvedEmail {
-                    loginEmail = resolvedEmail
-                }
-                lastLoginMethod = .google
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+
+            guard googleFlowActive else { return }
+
+            guard sessionReady else {
+                googleCompletionStarted = false
                 googleFlowActive = false
                 showGoogleAuth = false
                 googleAuthURL = nil
-                didBootstrapSession = true
-                isAuthenticated = true
+                loginError = "No pudimos confirmar la sesión de MetroGAS con Google. Intentá de nuevo."
+                return
             }
+
+            // Email real de la sesión (después del probe). No confiar solo en login_hint.
+            var resolvedEmail = loginEmail
+            for _ in 0..<8 {
+                let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
+                if let email = identity.email, !email.isEmpty {
+                    resolvedEmail = email
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            if let resolvedEmail {
+                loginEmail = resolvedEmail
+            }
+
+            lastLoginMethod = .google
+            googleFlowActive = false
+            showGoogleAuth = false
+            googleAuthURL = nil
+            googleCompletionStarted = false
+            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            didBootstrapSession = true
+            isAuthenticated = true
         }
     }
 
     func cancelGoogleLogin() {
         googleFlowActive = false
+        googleCompletionStarted = false
+        isConfirmingGoogleSession = false
         showGoogleAuth = false
         googleAuthURL = nil
         loginError = nil
