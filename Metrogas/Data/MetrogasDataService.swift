@@ -35,7 +35,8 @@ actor MetrogasDataService {
         let snapshot = try await PortalDataBridge.shared.syncFromSession(
             loginHint: loginHint,
             preferredAccountId: preferredAccountId,
-            timeoutSeconds: hasLinkedId ? 18 : 28
+            // +publicSubscription (email) alarga un poco el camino M360.
+            timeoutSeconds: hasLinkedId ? 26 : 34
         )
 
         account = MetrogasJSONParser.mergeAccount(account, snapshot.account)

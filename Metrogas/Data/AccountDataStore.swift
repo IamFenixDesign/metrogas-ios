@@ -225,7 +225,8 @@ final class AccountDataStore: ObservableObject {
                 nextAccount.holderName = account.holderName
             }
 
-            account = nextAccount
+            // Preferir datos frescos no vacíos; conservar caché si la red no trajo el campo.
+            account = MetrogasJSONParser.mergeAccount(account, nextAccount)
             // Conservar caché previa si la red devolvió vacío (evita borrar pagadas).
             if !snapshot.invoices.isEmpty {
                 invoices = snapshot.invoices
