@@ -16,6 +16,11 @@ enum MetrogasJSONParser {
             invoices = m360.invoices
             readings = m360.readings
             account = mergeAccount(account, m360.account)
+            // publicSubscription → email (y a veces teléfono).
+            if dict["subscriptionId"] != nil || dict["digInvEmail"] != nil || dict["TIPO"] != nil {
+                account = mergeAccount(account, parseSubscription(dict))
+            }
+            account = enrichAccountFromAnyJSON(dict, into: account)
         }
 
         // Si el JSON trae un N° de cliente asociado (cuenta Google/MetroGAS), capturarlo.
@@ -40,6 +45,7 @@ enum MetrogasJSONParser {
 
         if let dict = root as? [String: Any] {
             account = mergeAccount(account, parseAccount(from: dict))
+            account = enrichAccountFromAnyJSON(dict, into: account)
         }
 
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
@@ -108,6 +114,29 @@ enum MetrogasJSONParser {
         }
         if let name = firstMatch(text, #"(?:Titular|Nombre)\s*[:#]?\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s.'-]{3,60})"#) {
             account.holderName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let phone = firstMatch(text, #"(?:Tel[ée]fono|Celular|Tel)\s*[:#]?\s*([0-9\s\-()]{8,18})"#) {
+            let digits = phone.filter(\.isNumber)
+            if digits.count >= 8 { account.phone = digits }
+        }
+        if let tariff = firstMatch(text, #"(?:Categor[ií]a(?:\s*tarifaria)?|Tarifa)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\s./-]{0,24})"#) {
+            account.tariffCategory = tariff.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let locality = firstMatch(text, #"(?:Localidad|Partido|Barrio)\s*[:#]?\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s.'-]{2,40})"#) {
+            account.locality = locality.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let cp = firstMatch(text, #"(?:C\.?\s*P\.?A?|C[oó]digo\s*postal)\s*[:#]?\s*([A-Z]?\d{4}[A-Z]{0,3})"#) {
+            account.postalCode = cp.uppercased()
+        }
+        if let address = firstMatch(text, #"(?:Direcci[oó]n|Domicilio)\s*[:#]?\s*([^\n]{8,120})"#) {
+            account.supplyAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parsed = parseArgentineAddress(account.supplyAddress)
+            if account.locality == "—" || account.locality.isEmpty {
+                account.locality = parsed.locality ?? account.locality
+            }
+            if account.postalCode == "—" || account.postalCode.isEmpty {
+                account.postalCode = parsed.postalCode ?? account.postalCode
+            }
         }
         return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
     }
@@ -312,23 +341,306 @@ enum MetrogasJSONParser {
 
     private static func parseM360Info(_ info: [String: Any]) -> AccountProfile {
         var meter = "—"
-        if let meters = info["meters"] as? [[String: Any]],
-           let first = meters.first,
-           let n = stringValue(first, keys: ["NRO_MEDIDOR", "nro_medidor"]) {
-            meter = n
+        var meterExtras: [String: Any] = [:]
+        if let meters = info["meters"] as? [[String: Any]], let first = meters.first {
+            meterExtras = first
+            if let n = stringValue(first, keys: ["NRO_MEDIDOR", "nro_medidor", "MEDIDOR"]) {
+                meter = n
+            }
         }
-        let customer = stringValue(info, keys: ["PVE_NRO_CLIENTE", "NRO_CLIENTE", "accountId", "custNumber", "CUENTA"]) ?? "—"
+
+        // La SPA solo usa PVE_TITULAR / PVE_DIRECCION, pero billing puede traer más campos.
+        let customer = firstNonEmpty(
+            stringValue(info, keys: ["PVE_NRO_CLIENTE", "NRO_CLIENTE", "accountId", "custNumber", "CUENTA", "VKONT"]),
+            fuzzyString(in: info, matching: ["cliente", "account", "vkont", "cuenta"])
+        ) ?? "—"
+
+        let address = firstNonEmpty(
+            stringValue(info, keys: ["PVE_DIRECCION", "direccion", "DOMICILIO", "CALLE", "address", "accountAddress"]),
+            fuzzyString(in: info, matching: ["direccion", "domicilio", "address", "calle"])
+        ) ?? "—"
+
+        var locality = firstNonEmpty(
+            stringValue(info, keys: ["PVE_LOCALIDAD", "LOCALIDAD", "localidad", "CITY", "PARTIDO", "partido", "BARRIO"]),
+            fuzzyString(in: info, matching: ["localidad", "partido", "barrio", "city", "locality"]),
+            fuzzyString(in: meterExtras, matching: ["localidad", "partido"])
+        ) ?? "—"
+
+        var postal = firstNonEmpty(
+            stringValue(info, keys: ["PVE_CP", "PVE_CODIGO_POSTAL", "CODIGO_POSTAL", "CP", "cp", "postalCode", "ZIP"]),
+            fuzzyString(in: info, matching: ["postal", "codigopostal", "zip", "cpa"]),
+            fuzzyString(in: meterExtras, matching: ["postal", "cp"])
+        ) ?? "—"
+
+        // Muchas respuestas solo traen la dirección completa: sacar CP / localidad de ahí.
+        let parsedAddress = parseArgentineAddress(address)
+        if locality == "—" { locality = parsedAddress.locality ?? "—" }
+        if postal == "—" { postal = parsedAddress.postalCode ?? "—" }
+
+        let email = firstNonEmpty(
+            stringValue(info, keys: ["PVE_EMAIL", "EMAIL", "email", "mail", "digInvEmail"]),
+            fuzzyString(in: info, matching: ["email", "mail"])
+        ) ?? ""
+
+        let phone = firstNonEmpty(
+            stringValue(info, keys: ["PVE_TELEFONO", "TELEFONO", "telefono", "TEL", "phone", "telNumber", "NRO_TELEFONO", "TELF1"]),
+            fuzzyString(in: info, matching: ["telefono", "telnumber", "phone", "celular", "telf"]),
+            fuzzyString(in: meterExtras, matching: ["telefono", "telnumber", "phone", "celular"])
+        ) ?? "—"
+
+        let tariff = firstNonEmpty(
+            stringValue(info, keys: [
+                "PVE_TARIFA", "PVE_CATEGORIA", "TARIFA", "CATEGORIA", "categoria", "tarifa",
+                "TIPO_TARIFA", "CAT_TARIFA", "CLASE_TARIFA", "rateCategory"
+            ]),
+            fuzzyString(in: info, matching: ["tarifa", "categoria", "rate", "clase"]),
+            fuzzyString(in: meterExtras, matching: ["tarifa", "categoria", "rate", "clase"])
+        ) ?? "—"
+
         return AccountProfile(
-            holderName: stringValue(info, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE"]) ?? "",
+            holderName: firstNonEmpty(
+                stringValue(info, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE", "NOMBRE", "firstName"]),
+                fuzzyString(in: info, matching: ["titular", "nombre", "owner", "name"])
+            ) ?? "",
             customerNumber: MetrogasURLs.normalizedCustomerNumber(customer) ?? customer,
-            supplyAddress: stringValue(info, keys: ["PVE_DIRECCION", "direccion"]) ?? "—",
-            locality: stringValue(info, keys: ["PVE_LOCALIDAD", "localidad"]) ?? "—",
-            postalCode: stringValue(info, keys: ["PVE_CP", "cp"]) ?? "—",
-            email: stringValue(info, keys: ["PVE_EMAIL", "email"]) ?? "",
-            phone: stringValue(info, keys: ["PVE_TELEFONO", "telefono"]) ?? "—",
+            supplyAddress: parsedAddress.street ?? address,
+            locality: locality,
+            postalCode: postal,
+            email: email,
+            phone: phone,
             meterNumber: meter,
-            tariffCategory: stringValue(info, keys: ["PVE_TARIFA", "categoria", "tarifa"]) ?? "—"
+            tariffCategory: tariff
         )
+    }
+
+    /// Extrae calle / localidad / CP típicos de domicilios AR en una sola línea.
+    private static func parseArgentineAddress(_ raw: String) -> (street: String?, locality: String?, postalCode: String?) {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text != "—" else { return (nil, nil, nil) }
+
+        // CPA (C1414ABC) o CP etiquetado; evitar confundir altura de calle con CP.
+        var postal: String?
+        if let cp = firstMatch(text, #"(?i)(?:C\.?\s*P\.?A?|CÓDIGO\s*POSTAL|CODIGO\s*POSTAL)\s*[:#]?\s*([A-Z]?\d{4}[A-Z]{0,3})"#) {
+            postal = cp.uppercased()
+        } else if let cp = firstMatch(text, #"\(([A-Z]\d{4}[A-Z]{3})\)"#) {
+            postal = cp.uppercased()
+        } else if let cp = firstMatch(text, #"\b([A-Z]\d{4}[A-Z]{3})\b"#) {
+            postal = cp.uppercased()
+        } else if let cp = firstMatch(text, #"(?:,|\s[-/]\s|\s)\(?(\d{4})\)?\s*$"#) {
+            postal = cp
+        }
+
+        // Separadores comunes en facturas MetroGAS: coma, " - ", " / ".
+        var parts = text
+            .components(separatedBy: CharacterSet(charactersIn: ",;|/"))
+            .flatMap { $0.components(separatedBy: " - ") }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        // Si el último tramo es solo el CP / "CPA xxxx", sacarlo.
+        if parts.count >= 2, let last = parts.last {
+            var stripped = last
+            if let postal {
+                stripped = stripped.replacingOccurrences(of: postal, with: "", options: .caseInsensitive)
+            }
+            stripped = stripped.replacingOccurrences(of: #"(?i)\bC\.?\s*P\.?A?\b"#, with: "", options: .regularExpression)
+            stripped = stripped.trimmingCharacters(in: CharacterSet(charactersIn: "()[] "))
+            let lastDigits = last.filter(\.isNumber)
+            let lastIsPostal =
+                stripped.isEmpty
+                || (last.count == 4 && lastDigits.count == 4)
+                || (last.count == 8 && last.range(of: #"^[A-Z]\d{4}[A-Z]{3}$"#, options: .regularExpression) != nil)
+            if lastIsPostal {
+                if postal == nil {
+                    postal = firstMatch(last, #"([A-Z]?\d{4}[A-Z]{0,3})"#)?.uppercased() ?? last.uppercased()
+                }
+                parts.removeLast()
+            }
+        }
+
+        var locality: String?
+        var street = text
+
+        if parts.count >= 2 {
+            var last = parts.last!
+            if let postal {
+                last = last.replacingOccurrences(of: postal, with: "", options: .caseInsensitive)
+            }
+            last = last.replacingOccurrences(of: #"(?i)\bC\.?\s*P\.?A?\b"#, with: "", options: .regularExpression)
+            last = last.trimmingCharacters(in: CharacterSet(charactersIn: "()[] "))
+            if last.count >= 3, last.rangeOfCharacter(from: .letters) != nil {
+                locality = last
+            }
+            street = parts.dropLast().joined(separator: ", ")
+            if street.isEmpty { street = text }
+        } else if let postal {
+            // "CALLE 123 CABA C1414ABC" o "… CP 1406 FLORES"
+            var rest = text
+            rest = rest.replacingOccurrences(of: postal, with: "", options: .caseInsensitive)
+            rest = rest.replacingOccurrences(of: #"(?i)\bC\.?\s*P\.?A?\b"#, with: "", options: .regularExpression)
+            rest = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let city = firstMatch(rest, #"(?i)\b(C\.?A\.?B\.?A\.?|CABA|CAPITAL FEDERAL|BUENOS AIRES)\b"#) {
+                locality = city.uppercased().contains("CABA") || city.uppercased().contains("C.A.B.A")
+                    ? "CABA"
+                    : city
+                street = rest.replacingOccurrences(of: city, with: "", options: .caseInsensitive)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ",- "))
+            } else if let city = firstMatch(rest, #"\b([A-ZÁÉÍÓÚÜÑ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[A-ZÁÉÍÓÚÜÑ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+){0,3})\s*$"#) {
+                // Últimas 1–4 palabras alfabéticas → localidad probable.
+                let housePrefix = firstMatch(rest, #"^(.+?\d{1,5})\b"#)
+                if let housePrefix, rest.hasPrefix(housePrefix), city != housePrefix {
+                    locality = city
+                    street = housePrefix
+                }
+            }
+        }
+
+        return (street, locality, postal)
+    }
+
+    /// Parsea respuesta de publicSubscription (email de factura digital).
+    static func parseSubscription(_ dict: [String: Any]) -> AccountProfile {
+        var account = AccountProfile.empty
+        if let email = firstNonEmpty(
+            stringValue(dict, keys: ["email", "Email", "digInvEmail", "mail", "MAIL"]),
+            fuzzyString(in: dict, matching: ["email", "mail"])
+        ) {
+            account.email = email
+        }
+        if let phone = firstNonEmpty(
+            stringValue(dict, keys: ["telNumber", "telefono", "phone", "TELEFONO", "TEL"]),
+            fuzzyString(in: dict, matching: ["telefono", "telnumber", "phone"])
+        ) {
+            account.phone = phone
+        }
+        return account
+    }
+
+    /// Escaneo profundo de un JSON M360 por categoría / teléfono / domicilio.
+    static func enrichAccountFromAnyJSON(_ root: Any, into base: AccountProfile) -> AccountProfile {
+        var account = base
+        guard let dict = root as? [String: Any] else { return account }
+
+        if account.tariffCategory == "—" || account.tariffCategory.isEmpty {
+            if let tariff = firstNonEmpty(
+                stringValue(dict, keys: [
+                    "PVE_TARIFA", "PVE_CATEGORIA", "TARIFA", "CATEGORIA", "categoria",
+                    "TIPO_TARIFA", "CAT_TARIFA", "CLASE_TARIFA", "rateCategory", "TARIFTYP"
+                ]),
+                deepFuzzyString(in: dict, matching: ["tarifa", "categoria", "tariftyp", "cat_tarif"], depth: 0)
+            ) {
+                account.tariffCategory = tariff
+            } else if let info = dict["info"] as? [String: Any],
+                      let hint = deepTariffHint(in: info) {
+                account.tariffCategory = hint
+            } else if let meters = (dict["meters"] as? [Any])
+                        ?? ((dict["info"] as? [String: Any])?["meters"] as? [Any]),
+                      let hint = deepTariffHint(in: meters) {
+                account.tariffCategory = hint
+            }
+        }
+
+        if account.phone == "—" || account.phone.isEmpty {
+            if let phone = firstNonEmpty(
+                stringValue(dict, keys: ["PVE_TELEFONO", "TELEFONO", "telefono", "telNumber", "TEL_NUMBER", "TELF1"]),
+                deepFuzzyString(in: dict, matching: ["telefono", "telnumber", "telf1"], depth: 0)
+            ) {
+                account.phone = phone
+            }
+        }
+
+        if account.email.isEmpty {
+            if let email = firstNonEmpty(
+                stringValue(dict, keys: ["email", "Email", "digInvEmail", "SMTP_ADDR"]),
+                deepFuzzyString(in: dict, matching: ["email", "smtp"], depth: 0)
+            ), email.contains("@") {
+                account.email = email
+            }
+        }
+
+        if account.locality == "—" || account.postalCode == "—" {
+            let address = firstNonEmpty(
+                stringValue(dict, keys: ["PVE_DIRECCION", "accountAddress", "direccion", "DOMICILIO"]),
+                deepFuzzyString(in: dict, matching: ["direccion", "domicilio", "address"], depth: 0)
+            )
+            if let address {
+                let parsed = parseArgentineAddress(address)
+                if account.locality == "—" { account.locality = parsed.locality ?? "—" }
+                if account.postalCode == "—" { account.postalCode = parsed.postalCode ?? "—" }
+                if account.supplyAddress == "—" { account.supplyAddress = parsed.street ?? address }
+            }
+        }
+
+        return account
+    }
+
+    private static func deepFuzzyString(in dict: [String: Any], matching needles: [String], depth: Int) -> String? {
+        guard depth < 6 else { return nil }
+        if let hit = fuzzyString(in: dict, matching: needles) { return hit }
+        for value in dict.values {
+            if let nested = value as? [String: Any],
+               let hit = deepFuzzyString(in: nested, matching: needles, depth: depth + 1) {
+                return hit
+            }
+            if let array = value as? [[String: Any]] {
+                for item in array {
+                    if let hit = deepFuzzyString(in: item, matching: needles, depth: depth + 1) {
+                        return hit
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Categorías residenciales / servicio general típicas de MetroGAS (R1–R3, S1…).
+    private static func deepTariffHint(in node: Any, depth: Int = 0) -> String? {
+        guard depth < 6 else { return nil }
+        if let s = node as? String {
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let m = firstMatch(trimmed, #"(?i)\b((?:R|S|P)\s*[1-3]|Residencial\s*[1-3]|T1|T2|T3)\b"#) {
+                return m.uppercased().replacingOccurrences(of: "  ", with: " ")
+            }
+            return nil
+        }
+        if let dict = node as? [String: Any] {
+            for (key, value) in dict {
+                let lk = key.lowercased()
+                if lk.contains("tarifa") || lk.contains("categoria") || lk.contains("clase") || lk.contains("rate") {
+                    if let s = value as? String, !s.isEmpty { return s }
+                    if let n = value as? NSNumber { return n.stringValue }
+                }
+                if let hit = deepTariffHint(in: value, depth: depth + 1) { return hit }
+            }
+        } else if let array = node as? [Any] {
+            for item in array {
+                if let hit = deepTariffHint(in: item, depth: depth + 1) { return hit }
+            }
+        }
+        return nil
+    }
+
+    private static func firstNonEmpty(_ values: String?...) -> String? {
+        for value in values {
+            guard let value else { continue }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, trimmed != "—", trimmed != "-" { return trimmed }
+        }
+        return nil
+    }
+
+    private static func fuzzyString(in dict: [String: Any], matching needles: [String]) -> String? {
+        for (key, value) in dict {
+            let lowered = key.lowercased()
+            guard needles.contains(where: { lowered.contains($0) }) else { continue }
+            if let s = value as? String {
+                let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            } else if let n = value as? NSNumber {
+                return n.stringValue
+            }
+        }
+        return nil
     }
 
     private static func parseM360Consumption(_ dict: [String: Any]) -> ConsumptionReading? {

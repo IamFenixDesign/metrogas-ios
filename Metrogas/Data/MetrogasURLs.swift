@@ -29,6 +29,11 @@ enum MetrogasURLs {
         URL(string: "https://saldos.micuenta.metrogas.com.ar/OvServiceHub/api/v1/M360/publicpayment/list/\(accountId)")!
     }
 
+    /// Factura digital / email adherido (captcha en el path).
+    static func m360Subscription(accountId: String, captchaToken: String) -> URL {
+        URL(string: "https://saldos.micuenta.metrogas.com.ar/OvServiceHub/api/v1/publicSubscription/\(accountId)/\(captchaToken)")!
+    }
+
     static func isMetrogasAuthHost(_ host: String) -> Bool {
         let h = host.lowercased()
         return h.contains("accounts.ondemand.com")

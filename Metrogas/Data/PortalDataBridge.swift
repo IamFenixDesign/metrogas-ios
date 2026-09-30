@@ -20,10 +20,6 @@ final class PortalDataBridge: NSObject {
     private var didTriggerAPISync = false
     private var mode: SyncMode = .discover
     private var pageQueue: [URL] = []
-    private var capturedListR2 = false
-    private var capturedBilling = false
-    private var capturedConsumption = false
-
     private enum SyncMode {
         case discover
         case saldos
@@ -50,7 +46,7 @@ final class PortalDataBridge: NSObject {
                 accountId: linkedId,
                 loginHint: loginHint,
                 startURLs: [MetrogasURLs.saldosGo(accountId: linkedId)],
-                timeoutSeconds: min(18, timeoutSeconds)
+                timeoutSeconds: min(26, timeoutSeconds)
             )
             account = MetrogasJSONParser.mergeAccount(account, saldos.account)
             account.customerNumber = linkedId
@@ -154,9 +150,6 @@ final class PortalDataBridge: NSObject {
         self.accountId = accountId
         self.loginHint = loginHint
         self.didTriggerAPISync = false
-        self.capturedListR2 = false
-        self.capturedBilling = false
-        self.capturedConsumption = false
         self.pageQueue = Array(startURLs.dropFirst())
         captured.removeAll()
         domText = ""
@@ -562,6 +555,24 @@ final class PortalDataBridge: NSObject {
             });
           }
 
+          function getJSON(path, cb) {
+            getToken(function(token) {
+              if (!token) { cb(0, ''); return; }
+              // captcha va en el path: /publicSubscription/{account}/{token}
+              var url = path;
+              if (path.indexOf('/publicSubscription/') !== -1) {
+                url = path.replace(/\/?$/, '/') + token;
+              }
+              var xhr = new XMLHttpRequest();
+              xhr.open('GET', url, true);
+              xhr.setRequestHeader('Accept', 'application/json,*/*');
+              xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4) cb(xhr.status, xhr.responseText || '');
+              };
+              xhr.send();
+            });
+          }
+
           function run() {
             postNative('syncStart', { accountId: ACCOUNT });
             // Primero listR2: trae historial completo (pagadas + pendientes).
@@ -575,7 +586,14 @@ final class PortalDataBridge: NSObject {
                 postNative('net', { url: '/OvServiceHub/api/v1/M360/publicbilling/r2', method: 'POST', status: status, body: body });
                 postJSON('/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, {}, function(status3, body3) {
                   postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, method: 'POST', status: status3, body: body3 });
-                  postNative('syncDone', { accountId: ACCOUNT });
+                  // Email de factura digital (y datos de contacto si existen).
+                  getJSON('/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, function(status4, body4) {
+                    postNative('net', { url: '/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, method: 'GET', status: status4, body: body4 });
+                    getJSON('/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, function(status5, body5) {
+                      postNative('net', { url: '/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, method: 'GET', status: status5, body: body5 });
+                      postNative('syncDone', { accountId: ACCOUNT });
+                    });
+                  });
                 });
               });
             });
@@ -602,6 +620,8 @@ extension PortalDataBridge: WKScriptMessageHandler {
             if url.localizedCaseInsensitiveContains("OvServiceHub")
                 || url.localizedCaseInsensitiveContains("publicbilling")
                 || url.localizedCaseInsensitiveContains("publicinvoice")
+                || url.localizedCaseInsensitiveContains("publicsubscription")
+                || url.localizedCaseInsensitiveContains("publicAccount")
                 || url.localizedCaseInsensitiveContains("consumption")
                 || url.localizedCaseInsensitiveContains("account")
                 || url.localizedCaseInsensitiveContains("customer")
@@ -610,10 +630,6 @@ extension PortalDataBridge: WKScriptMessageHandler {
                 || trimmed.hasPrefix("{")
                 || trimmed.hasPrefix("[") {
                 captured.append((url, body))
-                let lower = url.lowercased()
-                if lower.contains("listr2") { capturedListR2 = true }
-                if lower.contains("publicbilling") { capturedBilling = true }
-                if lower.contains("consumption") { capturedConsumption = true }
             }
         } else if type == "dom", let payload = dict["payload"] as? [String: Any] {
             if let text = payload["text"] as? String, text.count > domText.count {
@@ -650,12 +666,6 @@ extension PortalDataBridge: WKScriptMessageHandler {
                 }
             }
         } else if type == "syncDone" {
-            Task { await completeIfNeeded() }
-        }
-
-        // Completar cuando ya tenemos historial (listR2 = pagadas+pendientes)
-        // y al menos billing o consumption; no cortar solo con deudas.
-        if mode == .saldos, capturedListR2, (capturedBilling || capturedConsumption) {
             Task { await completeIfNeeded() }
         }
     }
