@@ -29,12 +29,13 @@ final class AccountDataStore: ObservableObject {
 
     init() {
         loadCache()
-        if let linked = LinkedAccountStore.resolvePreferredCustomerNumber(
-            loginEmail: account.email.isEmpty ? LinkedAccountStore.lastBoundEmail() : account.email,
-            fallback: account.customerNumber
-        ) {
+        // Solo rehidratar N° si la caché ya tiene el email de esa misma cuenta.
+        if !account.email.isEmpty,
+           let linked = LinkedAccountStore.customerNumber(forEmail: account.email) {
             account.customerNumber = linked
             customerNumberDraft = linked
+        } else {
+            customerNumberDraft = MetrogasURLs.normalizedCustomerNumber(account.customerNumber) ?? ""
         }
         needsCustomerNumber = false
     }
@@ -135,23 +136,62 @@ final class AccountDataStore: ObservableObject {
         return true
     }
 
+    /// Ajusta identidad al email de login (Google o MetroGAS) sin inventar el nombre.
+    /// Si cambia el email, limpia perfil/facturas de la cuenta anterior.
     func applyLoginHint(email: String?) {
         let trimmed = email?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !trimmed.isEmpty else { return }
-        if account.email.isEmpty || account.email == AccountProfile.empty.email {
-            account.email = trimmed
+
+        let previous = account.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let next = trimmed.lowercased()
+        let switchedAccount = !previous.isEmpty && previous != next
+
+        if switchedAccount {
+            invoices = []
+            readings = []
+            account = .empty
+            lastSync = nil
+            syncMessage = nil
+            didSyncThisSession = false
+            UserDefaults.standard.removeObject(forKey: Keys.cache)
+            UserDefaults.standard.removeObject(forKey: Keys.lastSync)
         }
-        if account.holderName.isEmpty || account.holderName == AccountProfile.empty.holderName {
-            let local = trimmed.split(separator: "@").first.map(String.init) ?? trimmed
-            account.holderName = local.replacingOccurrences(of: ".", with: " ").capitalized
+
+        account.email = trimmed
+
+        // Nunca fabricar titular desde el email: eso mostraba nombres falsos.
+        // El nombre real llega de M360 (PVE_TITULAR).
+        if looksLikeFabricatedName(account.holderName, email: trimmed) {
+            account.holderName = ""
         }
-        // Si este email ya tiene N° de cliente asociado, precargarlo para la sync automática.
+
         if let linked = LinkedAccountStore.customerNumber(forEmail: trimmed) {
             account.customerNumber = linked
             customerNumberDraft = linked
             needsCustomerNumber = false
+        } else if switchedAccount {
+            account.customerNumber = "—"
+            customerNumberDraft = ""
         }
         persistCache()
+    }
+
+    /// Detecta nombres inventados tipo "juan.perez" → "Juan Perez" desde el email.
+    private func looksLikeFabricatedName(_ name: String, email: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let local = email.split(separator: "@").first.map(String.init)?.lowercased() ?? ""
+        guard !local.isEmpty else { return false }
+        let normalizedName = trimmed
+            .lowercased()
+            .replacingOccurrences(of: " ", with: ".")
+            .replacingOccurrences(of: "_", with: ".")
+        let normalizedLocal = local
+            .replacingOccurrences(of: " ", with: ".")
+            .replacingOccurrences(of: "_", with: ".")
+        return normalizedName == normalizedLocal
+            || trimmed.lowercased() == local.replacingOccurrences(of: ".", with: " ")
+            || trimmed.lowercased() == local.replacingOccurrences(of: "_", with: " ")
     }
 
     /// Sync con la sesión activa.
@@ -217,15 +257,19 @@ final class AccountDataStore: ObservableObject {
                 needsCustomerNumber = false
             }
 
-            if nextAccount.email.isEmpty, let emailHint {
+            // Email de login siempre gana como contacto de la sesión.
+            if let emailHint, !emailHint.isEmpty {
                 nextAccount.email = emailHint
             }
-            if nextAccount.holderName.isEmpty {
-                applyLoginHint(email: emailHint)
-                nextAccount.holderName = account.holderName
+            // No rellenar titular con basura del email; dejar vacío hasta PVE_TITULAR.
+            if looksLikeFabricatedName(nextAccount.holderName, email: nextAccount.email) {
+                nextAccount.holderName = ""
+            }
+            if looksLikeFabricatedName(account.holderName, email: emailHint ?? account.email) {
+                account.holderName = ""
             }
 
-            // Preferir datos frescos no vacíos; conservar caché si la red no trajo el campo.
+            // Preferir datos frescos de M360; conservar caché solo en campos vacíos.
             account = MetrogasJSONParser.mergeAccount(account, nextAccount)
             // Conservar caché previa si la red devolvió vacío (evita borrar pagadas).
             if !snapshot.invoices.isEmpty {
@@ -258,14 +302,8 @@ final class AccountDataStore: ObservableObject {
     func clear() {
         invoices = []
         readings = []
-        let keptCustomer = UserDefaults.standard.string(forKey: Keys.customerNumber)
         account = .empty
-        if let keptCustomer, let normalized = MetrogasURLs.normalizedCustomerNumber(keptCustomer) {
-            account.customerNumber = normalized
-            customerNumberDraft = normalized
-        } else {
-            customerNumberDraft = ""
-        }
+        customerNumberDraft = ""
         needsCustomerNumber = false
         searchText = ""
         invoiceFilter = .all
@@ -276,6 +314,7 @@ final class AccountDataStore: ObservableObject {
         didSyncThisSession = false
         UserDefaults.standard.removeObject(forKey: Keys.cache)
         UserDefaults.standard.removeObject(forKey: Keys.lastSync)
+        // No conservar N° de cliente en memoria: el vínculo queda por email en LinkedAccountStore.
     }
 
     private func persistCache() {

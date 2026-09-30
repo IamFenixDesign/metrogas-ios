@@ -112,7 +112,8 @@ enum MetrogasJSONParser {
         if let meter = firstMatch(text, #"(?:Medidor|N[°º]?\s*medidor)\s*[:#]?\s*([A-Za-z0-9-]{4,})"#) {
             account.meterNumber = meter
         }
-        if let name = firstMatch(text, #"(?:Titular|Nombre)\s*[:#]?\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s.'-]{3,60})"#) {
+        // Solo etiquetas explícitas de titular (evitar “Nombre” genérico del portal/login).
+        if let name = firstMatch(text, #"(?:Titular(?:\s+del\s+servicio)?)\s*[:#]?\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s.'-]{3,60})"#) {
             account.holderName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if let phone = firstMatch(text, #"(?:Tel[ée]fono|Celular|Tel)\s*[:#]?\s*([0-9\s\-()]{8,18})"#) {
@@ -399,8 +400,8 @@ enum MetrogasJSONParser {
 
         return AccountProfile(
             holderName: firstNonEmpty(
-                stringValue(info, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE", "NOMBRE", "firstName"]),
-                fuzzyString(in: info, matching: ["titular", "nombre", "owner", "name"])
+                stringValue(info, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE"]),
+                fuzzyString(in: info, matching: ["titular"])
             ) ?? "",
             customerNumber: MetrogasURLs.normalizedCustomerNumber(customer) ?? customer,
             supplyAddress: parsedAddress.street ?? address,
