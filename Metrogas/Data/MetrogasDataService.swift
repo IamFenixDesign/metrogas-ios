@@ -6,13 +6,15 @@ struct MetrogasDataSnapshot: Sendable {
     var readings: [ConsumptionReading]
 }
 
-/// Sincroniza con Oficina Virtual (Google o MetroGAS) vía M360 saldos.
+/// Sincroniza con Oficina Virtual (Google o MetroGAS) vía portal + M360 saldos.
 actor MetrogasDataService {
     static let shared = MetrogasDataService()
 
     private init() {}
 
     func fetchAccountData(loginHint: String?, preferredAccountId: String?) async throws -> MetrogasDataSnapshot {
+        LinkedAccountStore.migrateIfNeeded()
+
         let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
         let email: String? = {
             if let loginHint, !loginHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -21,41 +23,56 @@ actor MetrogasDataService {
             return identity.email
         }()
 
-        // Preferir solo N° ya vinculado al email o etiquetado; nunca dígitos sueltos de cookies.
-        let preferred =
-            MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "")
-            ?? identity.customerNumber
+        // Hint: solo vínculo confirmado. Nunca scrapes de cookies/HTML.
+        let preferredHint = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "")
+            ?? LinkedAccountStore.customerNumber(forEmail: email)
 
-        var account = seedAccount(loginHint: email, customerNumber: preferred)
-        let hasLinkedId = preferred != nil
-
+        // Siempre discovery en portal autenticado; el hint solo gana si aparece ahí.
         var snapshot = try await PortalDataBridge.shared.syncFromSession(
             loginHint: email,
-            preferredAccountId: preferred,
-            timeoutSeconds: hasLinkedId ? 18 : 26
+            preferredAccountId: preferredHint,
+            forcePortalDiscovery: true,
+            timeoutSeconds: 32
         )
 
-        // Si el N° vinculado no trajo perfil/facturas, fue un vínculo basura → rediscovery.
-        let linkedLooksEmpty = hasLinkedId
-            && snapshot.invoices.isEmpty
-            && snapshot.account.holderName.isEmpty
-            && (snapshot.account.supplyAddress.isEmpty || snapshot.account.supplyAddress == "—")
+        let billingId = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber)
+        let hasProfile = !snapshot.account.holderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasAddress = !snapshot.account.supplyAddress.isEmpty && snapshot.account.supplyAddress != "—"
+        let hasInvoices = !snapshot.invoices.isEmpty
+        let confirmed = billingId != nil && (hasProfile || hasAddress || hasInvoices)
 
-        if linkedLooksEmpty, let email {
+        // Si el hint no coincide con lo que billing/discovery confirmó → soltar veneno.
+        if let preferredHint, let billingId, preferredHint != billingId, confirmed {
             LinkedAccountStore.unbind(email: email)
+        }
+        if let preferredHint, !confirmed {
+            LinkedAccountStore.unbind(email: email)
+            // Reintentar discovery puro (sin hint) una vez.
             snapshot = try await PortalDataBridge.shared.syncFromSession(
                 loginHint: email,
                 preferredAccountId: nil,
-                timeoutSeconds: 26
+                forcePortalDiscovery: true,
+                timeoutSeconds: 32
             )
         }
 
+        var account = seedAccount(loginHint: email, customerNumber: nil)
         account = MetrogasJSONParser.mergeAccount(account, snapshot.account)
-        if let id = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) {
-            account.customerNumber = id
-        } else if !linkedLooksEmpty, let preferred {
-            account.customerNumber = preferred
+
+        let finalId = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber)
+        let finalProfile = !snapshot.account.holderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let finalAddress = !snapshot.account.supplyAddress.isEmpty && snapshot.account.supplyAddress != "—"
+        let finalInvoices = !snapshot.invoices.isEmpty
+        let finalConfirmed = finalId != nil && (finalProfile || finalAddress || finalInvoices)
+
+        if let finalId, finalConfirmed {
+            account.customerNumber = finalId
+            LinkedAccountStore.bind(email: email, customerNumber: finalId)
+        } else {
+            account.customerNumber = "—"
+            if let email { LinkedAccountStore.unbind(email: email) }
         }
+
         if let email, !email.isEmpty {
             account.email = email
         }

@@ -125,11 +125,8 @@ struct RootContainerView: View {
                    let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
                     session.loginEmail = email
                 }
-                // Caché vacía o sin sync previo → red. Si hay datos locales, no saturar.
-                let needsNetwork = store.invoices.isEmpty
-                    || store.lastSync == nil
-                    || MetrogasURLs.normalizedCustomerNumber(store.account.customerNumber) == nil
-                await store.refresh(loginHint: session.loginEmail, force: needsNetwork)
+                // Tras fixes de detección, siempre revalidar con el portal al abrir sesión.
+                await store.refresh(loginHint: session.loginEmail, force: true)
                 await reminders.reschedule(for: store.invoices)
             }
         }

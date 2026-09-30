@@ -103,7 +103,8 @@ enum MetrogasJSONParser {
 
     static func parseDOMText(_ text: String) -> MetrogasDataSnapshot {
         var account = AccountProfile.empty
-        if let customer = firstCustomerNumber(in: text) {
+        // Solo N° con etiqueta clara — nunca el primer bloque de 11 dígitos del DOM.
+        if let customer = labeledCustomerNumber(in: text) {
             account.customerNumber = customer
         }
         if let email = firstEmail(in: text) {
@@ -142,11 +143,11 @@ enum MetrogasJSONParser {
         return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
     }
 
-    /// Solo N° con etiqueta clara (Cliente / Contrato / Account). Evita IDs/timestamps basura.
+    /// Solo N° con etiqueta clara de cuenta. Evita “Cliente” suelto cerca de facturas.
     static func labeledCustomerNumber(in text: String) -> String? {
         if let labeled = firstMatch(
             text,
-            #"(?:N[°º]?\s*(?:de\s*)?cliente|nro\.?\s*cliente|Cliente|AccountId|accountId|Contrato|ctaContrato|VKONT|PVE_NRO_CLIENTE)\s*[:#=\s]\s*([0-9]{11})"#
+            #"(?:N[°º]?\s*(?:de\s*)?cliente|nro\.?\s*(?:de\s*)?cliente|AccountId|accountId|ctaContrato|VKONT|PVE_NRO_CLIENTE|NRO_CLIENTE)\s*[:#=\s]\s*([0-9]{11})"#
         ),
            let normalized = MetrogasURLs.normalizedCustomerNumber(labeled) {
             return normalized
