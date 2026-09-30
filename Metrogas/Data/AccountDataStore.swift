@@ -287,7 +287,12 @@ final class AccountDataStore: ObservableObject {
             } else {
                 // Pedir N° sin tirar el email de login ni un vínculo previo a ciegas.
                 if let emailHint { account.email = emailHint }
-                if linkedId == nil {
+                if let linkedId {
+                    account.customerNumber = linkedId
+                    customerNumberDraft = linkedId
+                    needsCustomerNumber = false
+                    syncMessage = "No pudimos actualizar tus facturas. Deslizá hacia abajo para reintentar."
+                } else {
                     account.holderName = ""
                     account.customerNumber = "—"
                     account.supplyAddress = "—"
@@ -301,11 +306,6 @@ final class AccountDataStore: ObservableObject {
                     customerNumberDraft = ""
                     needsCustomerNumber = true
                     syncMessage = "No pudimos asociar tu N° de cliente automáticamente. Cargalo en Cuenta (11 dígitos de tu factura) y queda vinculado."
-                } else {
-                    account.customerNumber = linkedId
-                    customerNumberDraft = linkedId
-                    needsCustomerNumber = false
-                    syncMessage = "No pudimos actualizar tus facturas. Deslizá hacia abajo para reintentar."
                 }
             }
 
