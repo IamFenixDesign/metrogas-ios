@@ -410,7 +410,7 @@ final class PortalDataBridge: NSObject {
       try {
         var text = document.body ? (document.body.innerText || '') : '';
         // Solo etiquetados en DOM visible (no cualquier bloque de 11 dígitos).
-        var labeled = text.match(/(?:N[°º]?\s*(?:de\s*)?cliente|Cliente|Contrato)\s*[:#]?\s*([0-9]{11})/i);
+        var labeled = text.match(/(?:N[°º]?\\s*(?:de\\s*)?cliente|Cliente|Contrato)\\s*[:#]?\\s*([0-9]{11})/i);
         if (labeled && labeled[1] && found.indexOf(labeled[1]) === -1) found.unshift(labeled[1]);
         post('dom', { text: text.substring(0, 250000), href: location.href });
       } catch (e) {}
