@@ -69,7 +69,7 @@ struct RootContainerView: View {
             _ = await permission
         }
         .onChange(of: session.isAuthenticated) { wasLoggedIn, loggedIn in
-            // Solo sync al pasar de login → autenticado (una vez por sesión).
+            // Única sync de la app: al iniciar sesión (Google o MetroGAS).
             guard loggedIn, !wasLoggedIn, didRunInitialBootstrap else {
                 if !loggedIn { store.clear() }
                 return
@@ -99,7 +99,7 @@ struct RootContainerView: View {
                    let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
                     session.loginEmail = email
                 }
-                // Una sola sync por sesión; si ya hay caché, no vuelve a pegarle a la red.
+                // Reabrir app: solo caché local, sin sync de red.
                 await store.refresh(loginHint: session.loginEmail, force: false)
                 await reminders.reschedule(for: store.invoices)
             }

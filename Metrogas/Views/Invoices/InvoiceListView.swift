@@ -2,7 +2,6 @@ import SwiftUI
 
 struct InvoiceListView: View {
     @EnvironmentObject private var store: AccountDataStore
-    @EnvironmentObject private var session: AppSession
 
     var body: some View {
         NavigationStack {
@@ -39,9 +38,6 @@ struct InvoiceListView: View {
                         }
                         .listStyle(.plain)
                         .scrollContentBackground(.hidden)
-                        .refreshable {
-                            await store.refresh(loginHint: session.loginEmail, force: true)
-                        }
                     }
                 }
             }

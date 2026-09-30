@@ -2,7 +2,6 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var store: AccountDataStore
-    @EnvironmentObject private var session: AppSession
 
     var body: some View {
         NavigationStack {
@@ -35,9 +34,6 @@ struct HomeView: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 28)
-                }
-                .refreshable {
-                    await store.refresh(loginHint: session.loginEmail, force: true)
                 }
             }
             .navigationTitle("Inicio")

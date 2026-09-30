@@ -3,7 +3,6 @@ import Charts
 
 struct ConsumptionView: View {
     @EnvironmentObject private var store: AccountDataStore
-    @EnvironmentObject private var session: AppSession
 
     var body: some View {
         NavigationStack {
@@ -19,9 +18,6 @@ struct ConsumptionView: View {
                         historyList
                     }
                     .padding(20)
-                }
-                .refreshable {
-                    await store.refresh(loginHint: session.loginEmail, force: true)
                 }
             }
             .navigationTitle("Consumo")

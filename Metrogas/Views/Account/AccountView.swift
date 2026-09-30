@@ -119,9 +119,6 @@ struct AccountView: View {
                     }
                 }
                 .scrollContentBackground(.hidden)
-                .refreshable {
-                    await store.refresh(loginHint: session.loginEmail, force: true)
-                }
             }
             .navigationTitle("Cuenta")
             .task {
