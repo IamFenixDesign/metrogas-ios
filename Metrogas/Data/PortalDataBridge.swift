@@ -112,8 +112,14 @@ final class PortalDataBridge: NSObject {
 
             switch ownership {
             case .match:
-                matched = saldos
-                return saldos
+                // Email Google/login == email de factura digital → auto-completar N° y cuenta.
+                var auto = saldos
+                if let loginHint, !loginHint.isEmpty {
+                    auto.account.email = loginHint
+                }
+                auto.account.customerNumber = accountId
+                matched = auto
+                return auto
             case .unknown:
                 if unknown == nil { unknown = saldos }
             case .mismatch:
@@ -122,9 +128,15 @@ final class PortalDataBridge: NSObject {
         }
 
         if let matched { return matched }
-        if let unknown { return unknown }
+        if let unknown {
+            var trusted = unknown
+            if let loginHint, !loginHint.isEmpty {
+                trusted.account.email = loginHint
+            }
+            return trusted
+        }
         if let mismatched {
-            // Conservar email de login Google/MetroGAS (no el de adhesión M360).
+            // Sesión del portal ya autoriza; conservar email de login Google.
             var trusted = mismatched
             if let loginHint, !loginHint.isEmpty {
                 trusted.account.email = loginHint

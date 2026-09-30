@@ -1,8 +1,7 @@
 import SwiftUI
 import WebKit
 
-/// WebView del mismo login que la Oficina Virtual web:
-/// portal → authn MDS → `asskova9q.../saml2/idp/sso/...` (Acceso Mi Cuenta / Google).
+/// WebView mínimo que abre solo el login de Google (OAuth de MetroGAS/SAP).
 struct GoogleAuthView: UIViewRepresentable {
     let url: URL
     var onNavigate: ((URL) -> Void)?
@@ -69,47 +68,35 @@ struct GoogleAuthSheet: View {
     let startURL: URL
 
     @State private var isLoading = true
-    @State private var currentHost = ""
-
-    private var statusText: String {
-        if session.isConfirmingWebSession {
-            return "Confirmando sesión MetroGAS…"
-        }
-        if currentHost.contains("accounts.google.com") {
-            return "Continuando con Google…"
-        }
-        if MetrogasURLs.isIdentityLoginHost(currentHost) {
-            return "Acceso Mi Cuenta…"
-        }
-        return "Abriendo inicio de sesión…"
-    }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 GoogleAuthView(url: startURL) { destination in
-                    session.handleWebLoginNavigation(destination)
+                    session.handleGoogleAuthNavigation(destination)
                     let host = destination.host?.lowercased() ?? ""
-                    currentHost = host
                     if MetrogasURLs.isAuthenticatedSessionHost(host)
-                        || MetrogasURLs.isIdentityLoginHost(host)
                         || host.contains("accounts.google.com") {
                         isLoading = false
                     }
                 }
 
-                if session.isConfirmingWebSession || isLoading {
-                    ProgressView(statusText)
+                if session.isConfirmingGoogleSession {
+                    ProgressView("Confirmando sesión MetroGAS…")
+                        .padding(16)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                } else if isLoading {
+                    ProgressView("Abriendo Google…")
                         .padding(16)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
             }
-            .navigationTitle("Acceso Mi Cuenta")
+            .navigationTitle(session.canContinueWithGoogle ? "Continuar" : "Continuar con Google")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancelar") {
-                        session.cancelWebLogin()
+                        session.cancelGoogleLogin()
                     }
                 }
             }

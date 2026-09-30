@@ -275,6 +275,7 @@ final class AccountDataStore: ObservableObject {
                 readings = snapshot.readings.isEmpty && !snapshot.invoices.isEmpty
                     ? MetrogasJSONParser.deriveReadings(from: snapshot.invoices)
                     : snapshot.readings
+                // Email Google/login → N° queda vinculado para las próximas sesiones.
                 LinkedAccountStore.bind(email: emailHint ?? nextAccount.email, customerNumber: confirmedId)
                 needsCustomerNumber = false
                 syncMessage = invoices.isEmpty
