@@ -61,25 +61,42 @@ struct InvoiceDetailView: View {
     }
 
     private func header(_ invoice: Invoice) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(invoice.number)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+        let tint: Color = {
+            switch invoice.status {
+            case .paid: return MetrogasTheme.success
+            case .pending: return MetrogasTheme.warning
+            case .overdue: return MetrogasTheme.danger
+            }
+        }()
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(tint.opacity(0.16))
+                        .frame(width: 40, height: 40)
+                    Image(systemName: invoice.status.symbolName)
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(tint)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(invoice.number)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(invoice.periodLabel)
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                }
                 Spacer()
                 StatusBadge(status: invoice.status)
             }
 
             Text(Formatters.money(invoice.amountARS))
-                .font(.system(size: 40, weight: .bold, design: .rounded))
+                .font(.system(size: 36, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.primary)
                 .contentTransition(.numericText())
-
-            Text(invoice.periodLabel)
-                .font(.system(.title3, design: .rounded).weight(.semibold))
         }
-        .padding(22)
+        .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .liquidGlass(cornerRadius: 24, prominent: true)
     }
