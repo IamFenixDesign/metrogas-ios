@@ -6,10 +6,15 @@ struct LoginView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var appear = false
+    @State private var showOtherAccountForm = false
     @FocusState private var focusedField: Field?
 
     private enum Field {
         case email, password
+    }
+
+    private var showGoogleContinue: Bool {
+        session.canContinueWithGoogle && !showOtherAccountForm
     }
 
     var body: some View {
@@ -23,9 +28,15 @@ struct LoginView: View {
                         .padding(.bottom, 28)
                         .appearMotion(visible: appear, index: 0)
 
-                    loginCard
-                        .padding(.horizontal, 20)
-                        .appearMotion(visible: appear, index: 1)
+                    Group {
+                        if showGoogleContinue {
+                            googleContinueCard
+                        } else {
+                            loginCard
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .appearMotion(visible: appear, index: 1)
 
                     footerLinks
                         .padding(.top, 22)
@@ -46,7 +57,13 @@ struct LoginView: View {
             if email.isEmpty, let saved = session.loginEmail {
                 email = saved
             }
+            showOtherAccountForm = false
             withAnimation(MetrogasTheme.springSoft) { appear = true }
+        }
+        .onChange(of: session.canContinueWithGoogle) { _, canContinue in
+            if canContinue {
+                showOtherAccountForm = false
+            }
         }
     }
 
@@ -64,12 +81,106 @@ struct LoginView: View {
                 .font(.system(size: 32, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
 
-            Text("Ingresá con tu cuenta MetroGAS.")
+            Text(showGoogleContinue
+                 ? "Tu cuenta de Google ya está lista para continuar."
+                 : "Ingresá con tu cuenta MetroGAS.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 28)
         }
+    }
+
+    /// Sección sin email/contraseña cuando Google ya estuvo iniciado.
+    private var googleContinueCard: some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(MetrogasTheme.brandBlue.opacity(0.12))
+                        .frame(width: 52, height: 52)
+                    Image(systemName: "g.circle.fill")
+                        .font(.system(size: 30))
+                        .foregroundStyle(MetrogasTheme.brandBlue)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Continuar con Google")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(session.rememberedGoogleEmail ?? "")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .background {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(0.55))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.5), lineWidth: 1)
+                    )
+            }
+
+            if let error = session.loginError {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(MetrogasTheme.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Button {
+                focusedField = nil
+                Task { await session.continueWithSavedGoogleAccount() }
+            } label: {
+                HStack {
+                    if session.isLoggingIn && !session.showGoogleAuth {
+                        ProgressView().tint(.white)
+                    }
+                    Text("Continuar")
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .foregroundStyle(.white)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [MetrogasTheme.brandBlue, MetrogasTheme.brandCyan],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .shadow(color: MetrogasTheme.brandBlue.opacity(0.3), radius: 12, y: 6)
+                }
+            }
+            .buttonStyle(PressableGlassStyle())
+            .disabled(session.isLoggingIn)
+
+            Button {
+                withAnimation(MetrogasTheme.springSnappy) {
+                    session.useAnotherAccount()
+                    showOtherAccountForm = true
+                    email = ""
+                    password = ""
+                }
+            } label: {
+                Text("Usar otra cuenta")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(MetrogasTheme.brandBlue)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+            .disabled(session.isLoggingIn)
+        }
+        .padding(22)
+        .liquidGlass(cornerRadius: 28, prominent: true)
     }
 
     private var loginCard: some View {

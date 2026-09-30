@@ -4,12 +4,20 @@ import Combine
 
 @MainActor
 final class AppSession: ObservableObject {
+    enum LoginMethod: String {
+        case google
+        case password
+    }
+
     @Published var isAuthenticated: Bool {
         didSet { UserDefaults.standard.set(isAuthenticated, forKey: Keys.authenticated) }
     }
     @Published var appearanceMode: AppearanceMode = .system
     @Published var loginEmail: String? {
         didSet { UserDefaults.standard.set(loginEmail, forKey: Keys.loginEmail) }
+    }
+    @Published var lastLoginMethod: LoginMethod? {
+        didSet { UserDefaults.standard.set(lastLoginMethod?.rawValue, forKey: Keys.loginMethod) }
     }
 
     /// Sheet que abre únicamente accounts.google.com.
@@ -18,13 +26,26 @@ final class AppSession: ObservableObject {
 
     @Published var isLoggingIn = false
     @Published var loginError: String?
+    /// Google OAuth terminó y estamos confirmando la sesión del portal.
+    @Published var isConfirmingGoogleSession = false
 
     private var googleFlowActive = false
+    private var googleCompletionStarted = false
     private var didBootstrapSession = false
 
     private var loginHintMissing: Bool {
         guard let loginEmail else { return true }
         return loginEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Cuenta Google recordada: se puede continuar sin pedir email/contraseña.
+    var canContinueWithGoogle: Bool {
+        lastLoginMethod == .google && !loginHintMissing
+    }
+
+    var rememberedGoogleEmail: String? {
+        guard canContinueWithGoogle else { return nil }
+        return loginEmail?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     enum AppearanceMode: String, CaseIterable, Identifiable {
@@ -46,11 +67,16 @@ final class AppSession: ObservableObject {
         static let authenticated = "metrogas.session.authenticated"
         static let appearance = "metrogas.session.appearance"
         static let loginEmail = "metrogas.session.loginEmail"
+        static let loginMethod = "metrogas.session.loginMethod"
     }
 
     init() {
         isAuthenticated = UserDefaults.standard.bool(forKey: Keys.authenticated)
         loginEmail = UserDefaults.standard.string(forKey: Keys.loginEmail)
+        if let raw = UserDefaults.standard.string(forKey: Keys.loginMethod),
+           let method = LoginMethod(rawValue: raw) {
+            lastLoginMethod = method
+        }
         if let raw = UserDefaults.standard.string(forKey: Keys.appearance),
            let mode = AppearanceMode(rawValue: raw) {
             appearanceMode = mode
@@ -72,6 +98,7 @@ final class AppSession: ObservableObject {
             try await MetrogasAuthService.shared.login(email: trimmed, password: password)
             CredentialStore.save(email: trimmed, password: password)
             loginEmail = trimmed
+            lastLoginMethod = .password
             let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
             await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
             didBootstrapSession = true
@@ -81,6 +108,59 @@ final class AppSession: ObservableObject {
         } catch {
             loginError = "No pudimos iniciar sesión. Revisá tu conexión e intentá de nuevo."
         }
+    }
+
+    /// Continúa con la cuenta Google recordada: sin pedir email ni contraseña.
+    func continueWithSavedGoogleAccount() async {
+        guard canContinueWithGoogle else {
+            await startGoogleLogin()
+            return
+        }
+
+        isLoggingIn = true
+        loginError = nil
+        defer { isLoggingIn = false }
+
+        await WebCookieBridge.syncWebKitCookiesToHTTP()
+
+        // Si la sesión del portal sigue viva, entrar directo.
+        if await MetrogasAuthService.shared.probePortalSession() {
+            let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
+            if let email = identity.email, !email.isEmpty {
+                loginEmail = email
+            }
+            // No vincular N° acá: solo LinkedAccountStore confirmado o M360/discovery.
+            lastLoginMethod = .google
+            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            didBootstrapSession = true
+            isAuthenticated = true
+            return
+        }
+
+        // Abrir Google OAuth: con cookies de Google suele bastar elegir la cuenta.
+        do {
+            let url = try await MetrogasAuthService.shared.prepareGoogleOAuthURL()
+            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            googleAuthURL = url
+            googleFlowActive = true
+            googleCompletionStarted = false
+            isConfirmingGoogleSession = false
+            showGoogleAuth = true
+        } catch let error as MetrogasAuthError {
+            loginError = error.errorDescription
+        } catch {
+            loginError = "No pudimos continuar con tu cuenta de Google."
+        }
+    }
+
+    /// Olvida la cuenta Google recordada y vuelve al formulario completo.
+    func useAnotherAccount() {
+        lastLoginMethod = nil
+        loginEmail = nil
+        loginError = nil
+        CredentialStore.clear()
     }
 
     func startGoogleLogin() async {
@@ -94,6 +174,8 @@ final class AppSession: ObservableObject {
             await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
             googleAuthURL = url
             googleFlowActive = true
+            googleCompletionStarted = false
+            isConfirmingGoogleSession = false
             showGoogleAuth = true
         } catch let error as MetrogasAuthError {
             loginError = error.errorDescription
@@ -105,31 +187,81 @@ final class AppSession: ObservableObject {
     func handleGoogleAuthNavigation(_ url: URL) {
         guard googleFlowActive, let host = url.host?.lowercased() else { return }
 
-        if MetrogasURLs.isMetrogasPortalHost(host) {
-            Task {
+        // Capturar email desde la URL de Google apenas aparece (login_hint / Email).
+        // No cerrar el sheet acá: el usuario puede elegir otra cuenta.
+        if host.contains("accounts.google.com") || host.contains("google.com") {
+            if let email = MetrogasAuthService.emailFromOAuthURL(url) {
+                loginEmail = email
+            }
+            return
+        }
+
+        // Solo portal/acceso autenticados. Ignorar saldos (app pública) y redirects a medias.
+        guard MetrogasURLs.isAuthenticatedSessionHost(host) else { return }
+        guard !googleCompletionStarted else { return }
+        googleCompletionStarted = true
+        isConfirmingGoogleSession = true
+        isLoggingIn = true
+
+        Task {
+            defer {
+                isConfirmingGoogleSession = false
+                isLoggingIn = false
+            }
+
+            // Esperar a que las cookies SAML/SAP terminen de aterrizar.
+            var sessionReady = false
+            for _ in 0..<24 {
+                guard googleFlowActive else { return }
                 await WebCookieBridge.syncWebKitCookiesToHTTP()
-                // Resolver el email real de Google/SAP antes de marcar autenticado,
-                // para no syncar con la identidad de otra cuenta en caché.
-                if loginEmail == nil || loginHintMissing {
-                    for _ in 0..<4 {
-                        if let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
-                            loginEmail = email
-                            break
-                        }
-                        try? await Task.sleep(nanoseconds: 400_000_000)
-                    }
+                if await MetrogasAuthService.shared.probePortalSession() {
+                    sessionReady = true
+                    break
                 }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+
+            guard googleFlowActive else { return }
+
+            guard sessionReady else {
+                googleCompletionStarted = false
                 googleFlowActive = false
                 showGoogleAuth = false
                 googleAuthURL = nil
-                didBootstrapSession = true
-                isAuthenticated = true
+                loginError = "No pudimos confirmar la sesión de MetroGAS con Google. Intentá de nuevo."
+                return
             }
+
+            // Email real de la sesión (después del probe). No confiar solo en login_hint.
+            var resolvedEmail = loginEmail
+            for _ in 0..<8 {
+                let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
+                if let email = identity.email, !email.isEmpty {
+                    resolvedEmail = email
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            if let resolvedEmail {
+                loginEmail = resolvedEmail
+            }
+
+            lastLoginMethod = .google
+            googleFlowActive = false
+            showGoogleAuth = false
+            googleAuthURL = nil
+            googleCompletionStarted = false
+            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            didBootstrapSession = true
+            isAuthenticated = true
         }
     }
 
     func cancelGoogleLogin() {
         googleFlowActive = false
+        googleCompletionStarted = false
+        isConfirmingGoogleSession = false
         showGoogleAuth = false
         googleAuthURL = nil
         loginError = nil
@@ -180,25 +312,59 @@ final class AppSession: ObservableObject {
     }
 
     func logout() async {
-        await forceLocalLogout(keepEmail: false)
+        let keepGoogleAccount = lastLoginMethod == .google && !loginHintMissing
+        let preservedEmail = keepGoogleAccount ? loginEmail : nil
+        let preservedMethod: LoginMethod? = keepGoogleAccount ? .google : nil
+
+        isAuthenticated = false
+        showGoogleAuth = false
+        googleAuthURL = nil
+        googleFlowActive = false
+        didBootstrapSession = false
+        loginError = nil
         CredentialStore.clear()
-        await MetrogasAuthService.shared.clearCookies()
-        await WebCookieBridge.clearWebKitData()
+
+        if keepGoogleAccount {
+            // Mantener identidad Google + cookies de Google; cortar solo MetroGAS/SAP.
+            loginEmail = preservedEmail
+            lastLoginMethod = preservedMethod
+            await MetrogasAuthService.shared.clearMetrogasSessionCookiesKeepingGoogle()
+            await WebCookieBridge.clearNonGoogleWebKitData()
+        } else {
+            loginEmail = nil
+            lastLoginMethod = nil
+            await MetrogasAuthService.shared.clearCookies()
+            await WebCookieBridge.clearWebKitData()
+        }
     }
 
     /// Sesión SAP vencida: limpia cookies pero deja el email para reingresar rápido.
     func expireSession(clearSavedPassword: Bool) async {
         if clearSavedPassword { CredentialStore.clear() }
-        await forceLocalLogout(keepEmail: true)
-        await MetrogasAuthService.shared.clearCookies()
-        await WebCookieBridge.clearWebKitData()
+        let keepGoogle = lastLoginMethod == .google
+        let preserved = loginEmail
+        isAuthenticated = false
+        showGoogleAuth = false
+        googleAuthURL = nil
+        googleFlowActive = false
+        didBootstrapSession = false
+        loginEmail = preserved
+        if keepGoogle {
+            await MetrogasAuthService.shared.clearMetrogasSessionCookiesKeepingGoogle()
+            await WebCookieBridge.clearNonGoogleWebKitData()
+        } else {
+            await MetrogasAuthService.shared.clearCookies()
+            await WebCookieBridge.clearWebKitData()
+        }
         loginError = MetrogasAuthError.sessionExpired.errorDescription
     }
 
     private func forceLocalLogout(keepEmail: Bool) async {
         let preserved = keepEmail ? loginEmail : nil
+        let preservedMethod = keepEmail ? lastLoginMethod : nil
         isAuthenticated = false
         loginEmail = preserved
+        lastLoginMethod = preservedMethod
         showGoogleAuth = false
         googleAuthURL = nil
         googleFlowActive = false
