@@ -232,15 +232,16 @@ final class AppSession: ObservableObject {
                 return
             }
 
-            // Email real de la sesión (después del probe). No confiar solo en login_hint.
+            // Email real de la sesión (después del probe). Con ese email se auto-vincula el N°.
+            await WebCookieBridge.syncWebKitCookiesToHTTP()
             var resolvedEmail = loginEmail
-            for _ in 0..<8 {
+            for _ in 0..<12 {
                 let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
                 if let email = identity.email, !email.isEmpty {
                     resolvedEmail = email
                     break
                 }
-                try? await Task.sleep(nanoseconds: 250_000_000)
+                try? await Task.sleep(nanoseconds: 300_000_000)
             }
             if let resolvedEmail {
                 loginEmail = resolvedEmail
@@ -251,8 +252,17 @@ final class AppSession: ObservableObject {
             showGoogleAuth = false
             googleAuthURL = nil
             googleCompletionStarted = false
-            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+            var cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
             await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            // Segunda pasada: el sync discovery usa la misma sesión WebKit que Google.
+            await WebCookieBridge.syncWebKitCookiesToHTTP()
+            cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            // Portal listo otra vez antes de marcar autenticado (evita sync con cookies a medias).
+            for _ in 0..<6 {
+                if await MetrogasAuthService.shared.probePortalSession() { break }
+                try? await Task.sleep(nanoseconds: 350_000_000)
+            }
             didBootstrapSession = true
             isAuthenticated = true
         }
