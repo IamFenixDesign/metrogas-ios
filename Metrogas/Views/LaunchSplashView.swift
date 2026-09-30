@@ -101,14 +101,20 @@ struct RootContainerView: View {
     }
 
     private func syncAfterLogin() async {
-        // Re-resolver email Google/SAP. El N° lo confirma LinkedAccountStore o M360.
-        for _ in 0..<8 {
+        // Cookies + email Google/SAP antes de consultar M360.
+        await WebCookieBridge.syncWebKitCookiesToHTTP()
+        for _ in 0..<12 {
             let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
             if let email = identity.email, !email.isEmpty {
                 session.loginEmail = email
                 break
             }
-            try? await Task.sleep(nanoseconds: 200_000_000)
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        for _ in 0..<10 {
+            if await MetrogasAuthService.shared.probePortalSession() { break }
+            await WebCookieBridge.syncWebKitCookiesToHTTP()
+            try? await Task.sleep(nanoseconds: 350_000_000)
         }
 
         await store.refresh(loginHint: session.loginEmail, force: true)

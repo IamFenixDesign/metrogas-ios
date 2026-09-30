@@ -10,6 +10,13 @@ enum MetrogasURLs {
     static let registro = URL(string: "https://registro.micuenta.metrogas.com.ar/indexUserReg.html")!
     static let sitioInstitucional = URL(string: "https://www.metrogas.com.ar/")!
 
+    /// Entrada de login igual que la web: portal → authn MDS → IdP SAP Identity.
+    static let loginEntry = portalMobile
+
+    /// Endpoint SAML SSO de SAP Identity (Acceso Mi Cuenta / MetroGAS).
+    static let idpSSO = URL(string: "https://asskova9q.accounts.ondemand.com/saml2/idp/sso/asskova9q.accounts.ondemand.com")!
+    static let idpHost = "asskova9q.accounts.ondemand.com"
+
     /// App pública “Tu Factura / Saldos” (OvServiceHub M360 real).
     static let saldos = URL(string: "https://saldos.micuenta.metrogas.com.ar/")!
 
@@ -37,9 +44,18 @@ enum MetrogasURLs {
     static func isMetrogasAuthHost(_ host: String) -> Bool {
         let h = host.lowercased()
         return h.contains("accounts.ondemand.com")
+            || h.contains(idpHost)
             || h.contains("authn.br1.hana.ondemand.com")
             || h.contains("login.microsoftonline.com")
             || h.contains("accounts.google.com")
+    }
+
+    /// Página de login IdP (Acceso Mi Cuenta), no el portal aún autenticado.
+    static func isIdentityLoginHost(_ host: String) -> Bool {
+        let h = host.lowercased()
+        return h.contains("accounts.ondemand.com")
+            || h.contains(idpHost)
+            || h.contains("authn.br1.hana.ondemand.com")
     }
 
     static func isMetrogasPortalHost(_ host: String) -> Bool {

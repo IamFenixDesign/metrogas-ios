@@ -3,18 +3,11 @@ import SwiftUI
 struct LoginView: View {
     @EnvironmentObject private var session: AppSession
 
-    @State private var email = ""
-    @State private var password = ""
     @State private var appear = false
     @State private var showOtherAccountForm = false
-    @FocusState private var focusedField: Field?
 
-    private enum Field {
-        case email, password
-    }
-
-    private var showGoogleContinue: Bool {
-        session.canContinueWithGoogle && !showOtherAccountForm
+    private var showContinueCard: Bool {
+        session.canContinueWithSavedAccount && !showOtherAccountForm
     }
 
     var body: some View {
@@ -29,8 +22,8 @@ struct LoginView: View {
                         .appearMotion(visible: appear, index: 0)
 
                     Group {
-                        if showGoogleContinue {
-                            googleContinueCard
+                        if showContinueCard {
+                            continueCard
                         } else {
                             loginCard
                         }
@@ -46,21 +39,18 @@ struct LoginView: View {
             }
             .scrollDismissesKeyboard(.interactively)
         }
-        .sheet(isPresented: $session.showGoogleAuth) {
-            if let url = session.googleAuthURL {
+        .sheet(isPresented: $session.showWebLogin) {
+            if let url = session.webLoginURL {
                 GoogleAuthSheet(startURL: url)
                     .environmentObject(session)
                     .presentationDetents([.large])
             }
         }
         .onAppear {
-            if email.isEmpty, let saved = session.loginEmail {
-                email = saved
-            }
             showOtherAccountForm = false
             withAnimation(MetrogasTheme.springSoft) { appear = true }
         }
-        .onChange(of: session.canContinueWithGoogle) { _, canContinue in
+        .onChange(of: session.canContinueWithSavedAccount) { _, canContinue in
             if canContinue {
                 showOtherAccountForm = false
             }
@@ -81,9 +71,9 @@ struct LoginView: View {
                 .font(.system(size: 32, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
 
-            Text(showGoogleContinue
-                 ? "Tu cuenta de Google ya está lista para continuar."
-                 : "Ingresá con tu cuenta MetroGAS.")
+            Text(showContinueCard
+                 ? "Tu sesión quedó lista para continuar."
+                 : "Entrá con el mismo Acceso Mi Cuenta de la web.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -91,24 +81,23 @@ struct LoginView: View {
         }
     }
 
-    /// Sección sin email/contraseña cuando Google ya estuvo iniciado.
-    private var googleContinueCard: some View {
+    private var continueCard: some View {
         VStack(spacing: 16) {
             HStack(spacing: 14) {
                 ZStack {
                     Circle()
                         .fill(MetrogasTheme.brandBlue.opacity(0.12))
                         .frame(width: 52, height: 52)
-                    Image(systemName: "g.circle.fill")
+                    Image(systemName: "person.crop.circle.fill")
                         .font(.system(size: 30))
                         .foregroundStyle(MetrogasTheme.brandBlue)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Continuar con Google")
+                    Text("Continuar")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    Text(session.rememberedGoogleEmail ?? "")
+                    Text(session.rememberedAccountEmail ?? "")
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
@@ -135,11 +124,10 @@ struct LoginView: View {
             }
 
             Button {
-                focusedField = nil
-                Task { await session.continueWithSavedGoogleAccount() }
+                Task { await session.continueWithSavedAccount() }
             } label: {
                 HStack {
-                    if session.isLoggingIn && !session.showGoogleAuth {
+                    if session.isLoggingIn && !session.showWebLogin {
                         ProgressView().tint(.white)
                     }
                     Text("Continuar")
@@ -167,8 +155,6 @@ struct LoginView: View {
                 withAnimation(MetrogasTheme.springSnappy) {
                     session.useAnotherAccount()
                     showOtherAccountForm = true
-                    email = ""
-                    password = ""
                 }
             } label: {
                 Text("Usar otra cuenta")
@@ -185,26 +171,11 @@ struct LoginView: View {
 
     private var loginCard: some View {
         VStack(spacing: 16) {
-            VStack(spacing: 12) {
-                TextField("Email", text: $email)
-                    .textContentType(.username)
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($focusedField, equals: .email)
-                    .submitLabel(.next)
-                    .onSubmit { focusedField = .password }
-                    .padding(14)
-                    .background(fieldBackground)
-
-                SecureField("Contraseña", text: $password)
-                    .textContentType(.password)
-                    .focused($focusedField, equals: .password)
-                    .submitLabel(.go)
-                    .onSubmit { Task { await session.login(email: email, password: password) } }
-                    .padding(14)
-                    .background(fieldBackground)
-            }
+            Text("Se abre el mismo inicio de sesión de MetroGAS (Acceso Mi Cuenta), con email o Google.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if let error = session.loginError {
                 Text(error)
@@ -215,11 +186,10 @@ struct LoginView: View {
             }
 
             Button {
-                focusedField = nil
-                Task { await session.login(email: email, password: password) }
+                Task { await session.startWebLogin() }
             } label: {
                 HStack {
-                    if session.isLoggingIn && !session.showGoogleAuth {
+                    if session.isLoggingIn && !session.showWebLogin {
                         ProgressView().tint(.white)
                     }
                     Text("Ingresar")
@@ -242,39 +212,6 @@ struct LoginView: View {
             }
             .buttonStyle(PressableGlassStyle())
             .disabled(session.isLoggingIn)
-
-            HStack {
-                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1)
-                Text("o")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1)
-            }
-
-            Button {
-                focusedField = nil
-                Task { await session.startGoogleLogin() }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "g.circle.fill")
-                        .font(.title3)
-                    Text("Continuar con Google")
-                        .font(.subheadline.weight(.semibold))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
-                .foregroundStyle(.primary)
-                .background {
-                    Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
-                        )
-                }
-            }
-            .buttonStyle(PressableGlassStyle())
-            .disabled(session.isLoggingIn)
         }
         .padding(22)
         .liquidGlass(cornerRadius: 28, prominent: true)
@@ -290,14 +227,5 @@ struct LoginView: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private var fieldBackground: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color.white.opacity(0.72))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
-            )
     }
 }
