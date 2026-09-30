@@ -19,9 +19,6 @@ final class AccountDataStore: ObservableObject {
     /// Solo como respaldo si la OV no devolvió N° de cliente.
     @Published var needsCustomerNumber = false
     @Published var customerNumberDraft: String = ""
-    /// Evita re-sync al cambiar de tab o reabrir pantallas en la misma sesión.
-    private var didSyncThisSession = false
-
     private enum Keys {
         static let cache = "metrogas.account.cache.v1"
         static let lastSync = "metrogas.account.lastSync"
@@ -133,8 +130,6 @@ final class AccountDataStore: ObservableObject {
         customerNumberDraft = normalized
         LinkedAccountStore.bind(email: email ?? account.email, customerNumber: normalized)
         needsCustomerNumber = false
-        // Permitir una sync única tras vincular el N° (sigue siendo arranque de cuenta).
-        didSyncThisSession = false
         persistCache()
         return true
     }
@@ -155,7 +150,6 @@ final class AccountDataStore: ObservableObject {
             account = .empty
             lastSync = nil
             syncMessage = nil
-            didSyncThisSession = false
             UserDefaults.standard.removeObject(forKey: Keys.cache)
             UserDefaults.standard.removeObject(forKey: Keys.lastSync)
             WidgetSnapshotStore.clear()
@@ -200,18 +194,13 @@ final class AccountDataStore: ObservableObject {
     }
 
     /// Sync de cuenta/facturas/consumo.
-    /// Solo debe llamarse al iniciar sesión (o al vincular N° de cliente por primera vez).
-    /// Recargar / pull-to-refresh / reabrir la app no sincroniza.
+    /// `force: false` solo usa caché local. `force: true` consulta la red
+    /// (login, vincular N°, pull-to-refresh, o caché vacía al reabrir).
     func refresh(loginHint: String? = nil, force: Bool = false) async {
         guard !isLoading else { return }
 
         // Sin `force` no hay red: la info queda en caché local.
-        guard force else {
-            didSyncThisSession = true
-            return
-        }
-        // Una sola sync por sesión de login.
-        if didSyncThisSession { return }
+        guard force else { return }
 
         isLoading = true
         syncMessage = nil
@@ -285,7 +274,6 @@ final class AccountDataStore: ObservableObject {
                 readings = snapshot.readings
             }
             lastSync = Date()
-            didSyncThisSession = true
             UserDefaults.standard.set(lastSync, forKey: Keys.lastSync)
             persistCache()
 
@@ -315,7 +303,7 @@ final class AccountDataStore: ObservableObject {
         lastSync = nil
         syncMessage = nil
         needsReauthentication = false
-        didSyncThisSession = false
+        isLoading = false
         UserDefaults.standard.removeObject(forKey: Keys.cache)
         UserDefaults.standard.removeObject(forKey: Keys.lastSync)
         WidgetSnapshotStore.clear()

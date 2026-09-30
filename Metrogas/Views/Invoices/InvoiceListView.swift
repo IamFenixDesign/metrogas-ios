@@ -2,6 +2,7 @@ import SwiftUI
 
 struct InvoiceListView: View {
     @EnvironmentObject private var store: AccountDataStore
+    @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var tabScroll: TabBarScrollState
     @State private var appear = false
 
@@ -42,6 +43,9 @@ struct InvoiceListView: View {
             .navigationTitle("Facturas")
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $store.searchText, prompt: "Buscar N° o período")
+            .refreshable {
+                await store.refresh(loginHint: session.loginEmail, force: true)
+            }
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }
             }

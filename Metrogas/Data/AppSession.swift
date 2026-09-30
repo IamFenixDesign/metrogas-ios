@@ -182,16 +182,15 @@ final class AppSession: ObservableObject {
         if MetrogasURLs.isMetrogasPortalHost(host) {
             Task {
                 await WebCookieBridge.syncWebKitCookiesToHTTP()
-                // Resolver el email real de Google/SAP antes de marcar autenticado,
-                // para no syncar con la identidad de otra cuenta en caché.
-                if loginEmail == nil || loginHintMissing {
-                    for _ in 0..<4 {
-                        if let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
-                            loginEmail = email
-                            break
-                        }
-                        try? await Task.sleep(nanoseconds: 400_000_000)
+                // Resolver el email real de Google/SAP ANTES de marcar autenticado,
+                // para sincronizar la cuenta correcta (no otra en caché).
+                for _ in 0..<8 {
+                    if let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
+                        loginEmail = email
+                        break
                     }
+                    if !loginHintMissing { break }
+                    try? await Task.sleep(nanoseconds: 350_000_000)
                 }
                 lastLoginMethod = .google
                 googleFlowActive = false
