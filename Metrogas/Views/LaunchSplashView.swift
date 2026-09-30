@@ -42,7 +42,6 @@ struct RootContainerView: View {
     @EnvironmentObject private var reminders: ReminderService
     @State private var showSplash = true
     @State private var didRunInitialBootstrap = false
-    @State private var pendingLoginSync = false
 
     var body: some View {
         ZStack {
@@ -76,19 +75,15 @@ struct RootContainerView: View {
             _ = await permission
         }
         .onChange(of: session.isAuthenticated) { wasLoggedIn, loggedIn in
-            if !loggedIn {
-                store.clear()
-                pendingLoginSync = false
+            // Única sync de la app: al iniciar sesión (Google o MetroGAS).
+            guard loggedIn, !wasLoggedIn, didRunInitialBootstrap else {
+                if !loggedIn { store.clear() }
                 return
             }
-            guard loggedIn, !wasLoggedIn else { return }
-
-            // Si el bootstrap todavía no terminó, encolar la sync de login.
-            guard didRunInitialBootstrap else {
-                pendingLoginSync = true
-                return
+            Task {
+                await store.refresh(loginHint: session.loginEmail, force: true)
+                await reminders.reschedule(for: store.invoices)
             }
-            Task { await syncAfterLogin() }
         }
         .onChange(of: store.needsReauthentication) { _, needsReauth in
             guard needsReauth else { return }
@@ -98,21 +93,6 @@ struct RootContainerView: View {
                 store.clear()
             }
         }
-    }
-
-    private func syncAfterLogin() async {
-        // Re-resolver email Google/SAP. El N° lo confirma LinkedAccountStore o M360.
-        for _ in 0..<8 {
-            let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
-            if let email = identity.email, !email.isEmpty {
-                session.loginEmail = email
-                break
-            }
-            try? await Task.sleep(nanoseconds: 200_000_000)
-        }
-
-        await store.refresh(loginHint: session.loginEmail, force: true)
-        await reminders.reschedule(for: store.invoices)
     }
 
     private func bootstrapSessionAndData() async {
@@ -125,16 +105,12 @@ struct RootContainerView: View {
                    let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
                     session.loginEmail = email
                 }
-                // Tras fixes de detección, siempre revalidar con el portal al abrir sesión.
-                await store.refresh(loginHint: session.loginEmail, force: true)
+                // Reabrir app: solo caché local, sin sync de red.
+                await store.refresh(loginHint: session.loginEmail, force: false)
                 await reminders.reschedule(for: store.invoices)
             }
         }
 
         didRunInitialBootstrap = true
-        if pendingLoginSync, session.isAuthenticated {
-            pendingLoginSync = false
-            await syncAfterLogin()
-        }
     }
 }

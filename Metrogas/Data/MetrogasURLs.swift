@@ -51,13 +51,6 @@ enum MetrogasURLs {
             || h.contains("micuenta.metrogas.com.ar")
     }
 
-    /// Hosts donde vive la sesión autenticada (OV). No incluye saldos (app pública).
-    static func isAuthenticatedSessionHost(_ host: String) -> Bool {
-        let h = host.lowercased()
-        return h.contains("portal.micuenta.metrogas.com.ar")
-            || h.contains("acceso.micuenta.metrogas.com.ar")
-    }
-
     /// N° de cliente MetroGAS: 11 dígitos (como exige la web de saldos).
     static func normalizedCustomerNumber(_ raw: String) -> String? {
         let digits = raw.filter(\.isNumber)

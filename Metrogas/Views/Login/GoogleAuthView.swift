@@ -75,23 +75,21 @@ struct GoogleAuthSheet: View {
                 GoogleAuthView(url: startURL) { destination in
                     session.handleGoogleAuthNavigation(destination)
                     let host = destination.host?.lowercased() ?? ""
-                    if MetrogasURLs.isAuthenticatedSessionHost(host)
-                        || host.contains("accounts.google.com") {
+                    // Mientras esté en Google / SAP, seguimos; al volver al portal, listo.
+                    if MetrogasURLs.isMetrogasPortalHost(host) {
+                        isLoading = false
+                    } else if host.contains("accounts.google.com") {
                         isLoading = false
                     }
                 }
 
-                if session.isConfirmingGoogleSession {
-                    ProgressView("Confirmando sesión MetroGAS…")
-                        .padding(16)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                } else if isLoading {
+                if isLoading {
                     ProgressView("Abriendo Google…")
                         .padding(16)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
             }
-            .navigationTitle(session.canContinueWithGoogle ? "Continuar" : "Continuar con Google")
+            .navigationTitle("Continuar con Google")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
