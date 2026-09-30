@@ -20,16 +20,20 @@ final class PortalDataBridge: NSObject {
     private var didTriggerAPISync = false
     private var mode: SyncMode = .discover
     private var pageQueue: [URL] = []
+    /// Candidatos de N° descubiertos en la sesión autenticada del portal.
+    private var discoveredAccountIds: [String] = []
     private enum SyncMode {
         case discover
         case saldos
     }
 
-    /// Flujo completo: si la cuenta Google/MetroGAS ya tiene N° de cliente asociado,
-    /// carga M360 al toque; si no, lo descubre en el portal autenticado y sincroniza.
+    /// Flujo completo: descubre N° en el portal autenticado y luego consulta M360.
+    /// `preferredAccountId` solo se usa si aparece entre los candidatos del portal
+    /// (o como último recurso si el portal no expone ninguno).
     func syncFromSession(
         loginHint: String?,
         preferredAccountId: String?,
+        forcePortalDiscovery: Bool = true,
         timeoutSeconds: Double = 36
     ) async throws -> MetrogasDataSnapshot {
         var account = AccountProfile.empty
@@ -37,26 +41,15 @@ final class PortalDataBridge: NSObject {
             account.email = loginHint
         }
 
-        // Camino rápido: N° vinculado → solo M360 (sin discovery de portal).
-        if let linkedId = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "") {
-            let saldos = try await runCapture(
-                mode: .saldos,
-                accountId: linkedId,
-                loginHint: loginHint,
-                startURLs: [MetrogasURLs.saldosGo(accountId: linkedId)],
-                timeoutSeconds: min(16, timeoutSeconds)
-            )
-            account = MetrogasJSONParser.mergeAccount(account, saldos.account)
-            account.customerNumber = linkedId
-            var invoices = saldos.invoices
-            var readings = saldos.readings
-            if readings.isEmpty && !invoices.isEmpty {
-                readings = MetrogasJSONParser.deriveReadings(from: invoices)
-            }
-            return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+        let preferred = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "")
+
+        // Camino rápido SOLO si hay vínculo confirmado y no se fuerza discovery.
+        if !forcePortalDiscovery, let linkedId = preferred {
+            return try await syncSaldosOnly(accountId: linkedId, loginHint: loginHint, base: account, timeout: min(16, timeoutSeconds))
         }
 
-        // 1) Portal autenticado: descubrir N° (pocas URLs, corta rápido).
+        // 1) Portal autenticado: descubrir candidatos de N° ligados a ESTA sesión.
+        discoveredAccountIds = []
         let discovery = try await runCapture(
             mode: .discover,
             accountId: "",
@@ -65,36 +58,50 @@ final class PortalDataBridge: NSObject {
                 MetrogasURLs.portalOV2,
                 MetrogasURLs.portalMobile
             ],
-            timeoutSeconds: min(10, timeoutSeconds * 0.4)
+            timeoutSeconds: min(14, timeoutSeconds * 0.45)
         )
 
         account = MetrogasJSONParser.mergeAccount(account, discovery.account)
         var invoices = discovery.invoices
         var readings = discovery.readings
 
-        let discoveredId =
-            MetrogasURLs.normalizedCustomerNumber(discovery.account.customerNumber)
-            ?? extractCustomerNumber(from: discovery)
-            ?? MetrogasJSONParser.labeledCustomerNumber(in: domText)
-            ?? MetrogasJSONParser.labeledCustomerNumber(in: domTextAfterLastCapture(discovery))
+        var candidates = uniqueAccountIds(
+            discoveredAccountIds
+            + [
+                MetrogasURLs.normalizedCustomerNumber(discovery.account.customerNumber),
+                MetrogasJSONParser.labeledCustomerNumber(in: domText),
+                MetrogasJSONParser.labeledCustomerNumber(in: domTextAfterLastCapture(discovery))
+            ].compactMap { $0 }
+        )
 
-        guard let accountId = discoveredId else {
+        // Preferir el hint solo si el portal lo reconoce como cuenta de la sesión.
+        let accountId: String? = {
+            if let preferred, candidates.contains(preferred) { return preferred }
+            if let first = candidates.first { return first }
+            // Último recurso: hint confirmado previo (sin candidatos de portal).
+            return preferred
+        }()
+
+        guard let accountId else {
             return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
         }
 
-        account.customerNumber = accountId
-
-        // 2) Saldos M360 con el N° descubierto en la sesión.
+        // 2) Saldos M360 con el N° elegido.
         let saldos = try await runCapture(
             mode: .saldos,
             accountId: accountId,
             loginHint: loginHint,
             startURLs: [MetrogasURLs.saldosGo(accountId: accountId)],
-            timeoutSeconds: max(14, timeoutSeconds * 0.6)
+            timeoutSeconds: max(16, timeoutSeconds * 0.55)
         )
 
         account = MetrogasJSONParser.mergeAccount(account, saldos.account)
-        account.customerNumber = accountId
+        // Billing manda: PVE_NRO_CLIENTE del response pisa el candidato.
+        if let billingId = MetrogasURLs.normalizedCustomerNumber(saldos.account.customerNumber) {
+            account.customerNumber = billingId
+        } else {
+            account.customerNumber = accountId
+        }
         invoices = mergeInvoices(invoices, saldos.invoices)
         readings = mergeReadings(readings, saldos.readings)
 
@@ -103,6 +110,45 @@ final class PortalDataBridge: NSObject {
         }
 
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+    }
+
+    private func syncSaldosOnly(
+        accountId: String,
+        loginHint: String?,
+        base: AccountProfile,
+        timeout: Double
+    ) async throws -> MetrogasDataSnapshot {
+        var account = base
+        let saldos = try await runCapture(
+            mode: .saldos,
+            accountId: accountId,
+            loginHint: loginHint,
+            startURLs: [MetrogasURLs.saldosGo(accountId: accountId)],
+            timeoutSeconds: timeout
+        )
+        account = MetrogasJSONParser.mergeAccount(account, saldos.account)
+        if let billingId = MetrogasURLs.normalizedCustomerNumber(saldos.account.customerNumber) {
+            account.customerNumber = billingId
+        } else {
+            account.customerNumber = accountId
+        }
+        var invoices = saldos.invoices
+        var readings = saldos.readings
+        if readings.isEmpty && !invoices.isEmpty {
+            readings = MetrogasJSONParser.deriveReadings(from: invoices)
+        }
+        return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+    }
+
+    private func uniqueAccountIds(_ ids: [String]) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for raw in ids {
+            guard let id = MetrogasURLs.normalizedCustomerNumber(raw), !seen.contains(id) else { continue }
+            seen.insert(id)
+            out.append(id)
+        }
+        return out
     }
 
     private func domTextAfterLastCapture(_ snapshot: MetrogasDataSnapshot) -> String {
@@ -149,6 +195,9 @@ final class PortalDataBridge: NSObject {
         self.pageQueue = Array(startURLs.dropFirst())
         captured.removeAll()
         domText = ""
+        if mode == .discover {
+            discoveredAccountIds = []
+        }
 
         let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
         await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
@@ -212,9 +261,9 @@ final class PortalDataBridge: NSObject {
             snapshot.account.customerNumber = accountId
         }
 
-        // También intentar sacar N° / email del DOM crudo.
+        // Solo N° etiquetado en DOM (nunca un bloque suelto de 11 dígitos).
         if MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) == nil,
-           let found = MetrogasJSONParser.firstCustomerNumber(in: domText) {
+           let found = MetrogasJSONParser.labeledCustomerNumber(in: domText) {
             snapshot.account.customerNumber = found
         }
         if snapshot.account.email.isEmpty,
@@ -255,11 +304,10 @@ final class PortalDataBridge: NSObject {
 
     private func extractCustomerNumber(from snapshot: MetrogasDataSnapshot) -> String? {
         MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber)
-            ?? MetrogasJSONParser.firstCustomerNumber(in: snapshot.account.supplyAddress)
     }
 
     private func extractCustomerNumber(fromDOM snapshot: MetrogasDataSnapshot) -> String? {
-        // Nunca usar nro. de factura como N° de cliente (son 11 dígitos distintos).
+        // Nunca usar nro. de factura / supplyPoint como N° de cliente.
         MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber)
     }
 
@@ -410,11 +458,26 @@ final class PortalDataBridge: NSObject {
       try {
         var text = document.body ? (document.body.innerText || '') : '';
         // Solo etiquetados en DOM visible (no cualquier bloque de 11 dígitos).
-        var labeled = text.match(/(?:N[°º]?\\s*(?:de\\s*)?cliente|Cliente|Contrato)\\s*[:#]?\\s*([0-9]{11})/i);
+        var labeled = text.match(/(?:N[°º]?\\s*(?:de\\s*)?cliente|nro\\.?\\s*(?:de\\s*)?cliente|accountId|PVE_NRO_CLIENTE|VKONT)\\s*[:#=]?\\s*([0-9]{11})/i);
         if (labeled && labeled[1] && found.indexOf(labeled[1]) === -1) found.unshift(labeled[1]);
         post('dom', { text: text.substring(0, 250000), href: location.href });
       } catch (e) {}
+      try {
+        var cookieText = String(document.cookie || '');
+        var cookieBits = cookieText.split(';');
+        for (var c = 0; c < cookieBits.length; c++) {
+          var part = cookieBits[c].split('=');
+          var ck = (part[0] || '').trim();
+          var cv = part.slice(1).join('=');
+          if (isAccountKey(ck)) {
+            collectElevenDigitIds(cv).forEach(function(id) {
+              if (found.indexOf(id) === -1) found.push(id);
+            });
+          }
+        }
+      } catch (e) {}
       if (found.length) {
+        post('linkedAccounts', { ids: found });
         post('net', {
           url: '/metrogas/linked-account-discovery',
           method: 'GET',
@@ -586,13 +649,32 @@ extension PortalDataBridge: WKScriptMessageHandler {
                     triggerSaldosAPISyncIfNeeded()
                 }
             }
+        } else if type == "linkedAccounts",
+                  let payload = dict["payload"] as? [String: Any] {
+            let ids = (payload["ids"] as? [Any] ?? []).compactMap { value -> String? in
+                if let s = value as? String { return MetrogasURLs.normalizedCustomerNumber(s) }
+                if let n = value as? NSNumber { return MetrogasURLs.normalizedCustomerNumber(n.stringValue) }
+                return nil
+            }
+            discoveredAccountIds = uniqueAccountIds(discoveredAccountIds + ids)
         } else if type == "discoverDone" {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 250_000_000)
-                // Si ya hay N° de cliente usable, cortar discovery al toque.
+                if let payload = dict["payload"] as? [String: Any],
+                   let linked = payload["linked"] as? [Any] {
+                    let ids = linked.compactMap { value -> String? in
+                        if let s = value as? String { return MetrogasURLs.normalizedCustomerNumber(s) }
+                        if let n = value as? NSNumber { return MetrogasURLs.normalizedCustomerNumber(n.stringValue) }
+                        return nil
+                    }
+                    discoveredAccountIds = uniqueAccountIds(discoveredAccountIds + ids)
+                }
+                // Cortar solo con candidatos de sesión o N° etiquetado (no dígitos sueltos).
                 let early = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
-                if MetrogasURLs.normalizedCustomerNumber(early.account.customerNumber) != nil
-                    || MetrogasJSONParser.firstCustomerNumber(in: domText) != nil {
+                let hasCandidate = !discoveredAccountIds.isEmpty
+                    || MetrogasURLs.normalizedCustomerNumber(early.account.customerNumber) != nil
+                    || MetrogasJSONParser.labeledCustomerNumber(in: domText) != nil
+                if hasCandidate {
                     await completeIfNeeded()
                 } else if !pageQueue.isEmpty {
                     loadNextPageIfNeeded()

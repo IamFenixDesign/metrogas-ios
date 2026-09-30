@@ -223,7 +223,7 @@ actor MetrogasAuthService {
     }
 
     /// Email de la sesión (cookies/HTML).
-    /// El N° de cliente NO se inventa acá: solo sale de vínculos confirmados o de M360/discovery etiquetado.
+    /// El N° de cliente NO se resuelve acá: lo confirma el portal discovery + M360 billing.
     func resolveSignedInIdentity() async -> (email: String?, customerNumber: String?) {
         var email: String?
 
@@ -242,21 +242,19 @@ actor MetrogasAuthService {
             }
         }
 
-        // 2) HTML del portal: email si falta. N° solo con etiqueta clara.
-        var labeledCustomer: String?
-        for url in [MetrogasURLs.portalOV2, MetrogasURLs.portalMobile] {
-            guard let html = try? await loadHTML(url) else { continue }
-            if email == nil, let found = MetrogasJSONParser.firstEmail(in: html) {
-                email = found.lowercased()
+        // 2) HTML del portal: solo email. El N° lo confirma M360, no un scrape HTML.
+        if email == nil {
+            for url in [MetrogasURLs.portalOV2, MetrogasURLs.portalMobile] {
+                guard let html = try? await loadHTML(url) else { continue }
+                if let found = MetrogasJSONParser.firstEmail(in: html) {
+                    email = found.lowercased()
+                    break
+                }
+                if looksLikeAuthenticatedPortal(html: html, urlHint: url) { break }
             }
-            if labeledCustomer == nil {
-                labeledCustomer = MetrogasJSONParser.labeledCustomerNumber(in: html)
-            }
-            if email != nil, labeledCustomer != nil { break }
-            if looksLikeAuthenticatedPortal(html: html, urlHint: url) { break }
         }
 
-        return (email, labeledCustomer)
+        return (email, nil)
     }
 
     private func scoreCookieForEmail(_ cookie: HTTPCookie) -> Int {
