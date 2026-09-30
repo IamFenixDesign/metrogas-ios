@@ -103,8 +103,7 @@ enum MetrogasJSONParser {
 
     static func parseDOMText(_ text: String) -> MetrogasDataSnapshot {
         var account = AccountProfile.empty
-        // Solo N° con etiqueta clara — nunca el primer bloque de 11 dígitos del DOM.
-        if let customer = labeledCustomerNumber(in: text) {
+        if let customer = firstCustomerNumber(in: text) {
             account.customerNumber = customer
         }
         if let email = firstEmail(in: text) {
@@ -143,23 +142,12 @@ enum MetrogasJSONParser {
         return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
     }
 
-    /// Solo N° con etiqueta clara de cuenta. Evita “Cliente” suelto cerca de facturas.
-    static func labeledCustomerNumber(in text: String) -> String? {
-        if let labeled = firstMatch(
-            text,
-            #"(?:N[°º]?\s*(?:de\s*)?cliente|nro\.?\s*(?:de\s*)?cliente|AccountId|accountId|ctaContrato|VKONT|PVE_NRO_CLIENTE|NRO_CLIENTE)\s*[:#=\s]\s*([0-9]{11})"#
-        ),
+    static func firstCustomerNumber(in text: String) -> String? {
+        if let labeled = firstMatch(text, #"(?:N[°º]?\s*(?:de\s*)?cliente|Cliente|Account|Contrato)\s*[:#]?\s*([0-9]{11})"#),
            let normalized = MetrogasURLs.normalizedCustomerNumber(labeled) {
             return normalized
         }
-        return nil
-    }
-
-    static func firstCustomerNumber(in text: String) -> String? {
-        if let labeled = labeledCustomerNumber(in: text) {
-            return labeled
-        }
-        // Fallback laxo: solo cuando el caller lo necesita (p. ej. JSON ya filtrado).
+        // Fallback: primer bloque de 11 dígitos (evita teléfonos de 10).
         guard let raw = firstMatch(text, #"\b([0-9]{11})\b"#) else { return nil }
         return MetrogasURLs.normalizedCustomerNumber(raw)
     }
