@@ -19,6 +19,7 @@ struct InvoiceListView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Facturas")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .searchable(text: $store.searchText, prompt: "Buscar por número o período")
             .onAppear {
@@ -77,6 +78,13 @@ struct InvoiceListView: View {
                         .appearMotion(visible: appear, index: min(index + 1, 8))
                     }
                 }
+            }
+
+            Section {
+                FloatingTabBarSpacer()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
         }
         .listStyle(.plain)

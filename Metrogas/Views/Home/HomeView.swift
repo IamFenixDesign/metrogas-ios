@@ -41,15 +41,17 @@ struct HomeView: View {
 
                     recentActivity
                         .appearMotion(visible: appear, index: 5)
+
+                    FloatingTabBarSpacer()
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 4)
-                .padding(.bottom, 36)
+                .padding(.top, 8)
             }
             .scrollIndicators(.automatic)
             .background { LiquidGlassBackground() }
             .navigationTitle("Inicio")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }

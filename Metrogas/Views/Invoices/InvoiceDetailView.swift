@@ -52,9 +52,10 @@ struct InvoiceDetailView: View {
                     .appearMotion(visible: appear, index: 3)
                 actions(invoice)
                     .appearMotion(visible: appear, index: 4)
+
+                FloatingTabBarSpacer()
             }
             .padding(20)
-            .padding(.bottom, 16)
         }
         .background { LiquidGlassBackground() }
     }

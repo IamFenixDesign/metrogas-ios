@@ -19,13 +19,15 @@ struct ConsumptionView: View {
                         .appearMotion(visible: appear, index: 3)
                     historyList
                         .appearMotion(visible: appear, index: 4)
+
+                    FloatingTabBarSpacer()
                 }
                 .padding(20)
-                .padding(.bottom, 16)
             }
             .background { LiquidGlassBackground() }
             .navigationTitle("Consumo")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }
