@@ -13,14 +13,10 @@ struct AccountView: View {
         NavigationStack {
             List {
                 Section {
-                    TabBarScrollProbe()
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                }
-
-                Section {
                     VStack(spacing: 16) {
+                        TabBarScrollProbe()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
                         MetrogasLogo(height: 32, alignment: .center)
                             .frame(maxWidth: 160)
                         profileHeader

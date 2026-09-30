@@ -45,28 +45,45 @@ struct RootTabView: View {
             .environmentObject(tabScroll)
 
             glassTabBar
-                .padding(.horizontal, tabScroll.isCompact ? 48 : 20)
-                .padding(.bottom, tabScroll.isCompact ? 2 : 8)
-                .scaleEffect(tabScroll.isCompact ? 0.92 : 1, anchor: .bottom)
-                .offset(y: tabScroll.isCompact ? 28 : 0)
-                .opacity(tabScroll.isCompact ? 0.92 : 1)
+                .padding(.horizontal, tabScroll.isCompact ? 56 : 20)
+                .padding(.bottom, tabScroll.isCompact ? 0 : 8)
+                .scaleEffect(tabScroll.isCompact ? 0.86 : 1, anchor: .bottom)
+                .offset(y: tabScroll.isCompact ? 44 : 0)
+                .opacity(tabScroll.isCompact ? 0.0 : 1)
+                // Cuando está compacta queda casi oculta abajo; un toque en el borde inferior la restaura.
+                .overlay(alignment: .bottom) {
+                    if tabScroll.isCompact {
+                        Color.clear
+                            .frame(height: 28)
+                            .frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                tabScroll.reset()
+                            }
+                            .offset(y: 36)
+                    }
+                }
                 .allowsHitTesting(true)
         }
+        .animation(.spring(response: 0.32, dampingFraction: 0.88), value: tabScroll.isCompact)
         .animation(MetrogasTheme.springSoft, value: selected)
-        .animation(MetrogasTheme.springSnappy, value: tabScroll.isCompact)
+        .onAppear {
+            TabBarScrollState.shared = tabScroll
+        }
         .onChange(of: selected) { _, _ in
             tabScroll.reset()
+            TabBarScrollState.shared = tabScroll
         }
     }
 
     private var glassTabBar: some View {
-        HStack(spacing: tabScroll.isCompact ? 2 : 4) {
+        HStack(spacing: 4) {
             ForEach(AppTab.allCases, id: \.self) { tab in
                 tabButton(tab)
             }
         }
-        .padding(tabScroll.isCompact ? 4 : 6)
-        .liquidGlass(cornerRadius: tabScroll.isCompact ? 22 : 28, prominent: true)
+        .padding(6)
+        .liquidGlass(cornerRadius: 28, prominent: true)
         .accessibilityElement(children: .contain)
     }
 
@@ -78,21 +95,17 @@ struct RootTabView: View {
                 tabScroll.reset()
             }
         } label: {
-            VStack(spacing: tabScroll.isCompact ? 0 : 4) {
+            VStack(spacing: 4) {
                 Image(systemName: tab.systemImage)
-                    .font(.system(size: tabScroll.isCompact ? 16 : 18, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .symbolEffect(.bounce, value: isSelected)
-                    .frame(height: tabScroll.isCompact ? 18 : 22)
-
-                if !tabScroll.isCompact {
-                    Text(tab.title)
-                        .font(.caption2.weight(.semibold))
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
+                    .frame(height: 22)
+                Text(tab.title)
+                    .font(.caption2.weight(.semibold))
             }
             .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.72))
             .frame(maxWidth: .infinity)
-            .padding(.vertical, tabScroll.isCompact ? 8 : 10)
+            .padding(.vertical, 10)
             .background {
                 if isSelected {
                     Capsule(style: .continuous)
