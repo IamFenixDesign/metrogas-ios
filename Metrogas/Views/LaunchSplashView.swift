@@ -63,9 +63,10 @@ struct RootContainerView: View {
             withAnimation(.easeOut(duration: 0.2)) {
                 showSplash = false
             }
-            // Pedir permiso nativo de iOS al entrar (dialogo del sistema, sin botón).
-            _ = await reminders.requestPermissionOnLaunch()
+            // Pedir permiso nativo de iOS al entrar (diálogo del sistema, sin botón).
+            async let permission: Bool = reminders.requestPermissionOnLaunch()
             await bootstrap
+            _ = await permission
         }
         .onChange(of: session.isAuthenticated) { wasLoggedIn, loggedIn in
             // Solo sync al pasar de login → autenticado (una vez por sesión).
