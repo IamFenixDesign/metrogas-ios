@@ -160,10 +160,13 @@ final class AccountDataStore: ObservableObject {
     func refresh(loginHint: String? = nil, force: Bool = false) async {
         guard !isLoading else { return }
 
-        // No re-sincronizar al cambiar de tab ni cada vez que abre la app
-        // si esta sesión ya sincronizó y hay datos en caché.
-        if !force, didSyncThisSession, (!invoices.isEmpty || lastSync != nil) {
-            return
+        // Una sola sync: no al cambiar de tab ni al reabrir la app si ya hay caché.
+        if !force {
+            if didSyncThisSession { return }
+            if !invoices.isEmpty, let lastSync, Date().timeIntervalSince(lastSync) < 6 * 60 * 60 {
+                didSyncThisSession = true
+                return
+            }
         }
 
         isLoading = true
