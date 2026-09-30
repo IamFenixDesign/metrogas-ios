@@ -3,6 +3,7 @@ import Charts
 
 struct ConsumptionView: View {
     @EnvironmentObject private var store: AccountDataStore
+    @EnvironmentObject private var tabScroll: TabBarScrollState
     @State private var appear = false
 
     var body: some View {
@@ -24,6 +25,7 @@ struct ConsumptionView: View {
                 }
                 .padding(20)
             }
+            .tracksFloatingTabBar(tabScroll)
             .background { LiquidGlassBackground() }
             .navigationTitle("Consumo")
             .navigationBarTitleDisplayMode(.large)

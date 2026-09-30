@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var store: AccountDataStore
+    @EnvironmentObject private var tabScroll: TabBarScrollState
     @State private var appear = false
 
     var body: some View {
@@ -48,6 +49,7 @@ struct HomeView: View {
                 .padding(.top, 8)
             }
             .scrollIndicators(.automatic)
+            .tracksFloatingTabBar(tabScroll)
             .background { LiquidGlassBackground() }
             .navigationTitle("Inicio")
             .navigationBarTitleDisplayMode(.large)

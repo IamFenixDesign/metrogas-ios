@@ -4,6 +4,7 @@ struct AccountView: View {
     @EnvironmentObject private var store: AccountDataStore
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var reminders: ReminderService
+    @EnvironmentObject private var tabScroll: TabBarScrollState
     @State private var showLogoutConfirm = false
     @State private var customerNumberError: String?
     @State private var appear = false
@@ -146,6 +147,7 @@ struct AccountView: View {
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .listSectionSpacing(28)
+            .tracksFloatingTabBar(tabScroll)
             .background { LiquidGlassBackground() }
             .navigationTitle("Cuenta")
             .navigationBarTitleDisplayMode(.large)

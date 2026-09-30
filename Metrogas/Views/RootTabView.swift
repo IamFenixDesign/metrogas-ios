@@ -23,6 +23,7 @@ enum AppTab: Hashable, CaseIterable {
 }
 
 struct RootTabView: View {
+    @StateObject private var tabScroll = TabBarScrollState()
     @State private var selected: AppTab = .home
     @Namespace private var tabNamespace
 
@@ -41,24 +42,29 @@ struct RootTabView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .environmentObject(tabScroll)
 
             glassTabBar
-                .padding(.horizontal, 20)
-                .padding(.bottom, 8)
-                // El tab bar flota; el espacio lo reservan los scrolls de cada tab.
+                .padding(.horizontal, tabScroll.isCompact ? 36 : 20)
+                .padding(.bottom, tabScroll.isCompact ? 4 : 8)
+                .offset(y: tabScroll.isCompact ? 10 : 0)
                 .allowsHitTesting(true)
         }
         .animation(MetrogasTheme.springSoft, value: selected)
+        .animation(MetrogasTheme.springSnappy, value: tabScroll.isCompact)
+        .onChange(of: selected) { _, _ in
+            tabScroll.reset()
+        }
     }
 
     private var glassTabBar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: tabScroll.isCompact ? 2 : 4) {
             ForEach(AppTab.allCases, id: \.self) { tab in
                 tabButton(tab)
             }
         }
-        .padding(6)
-        .liquidGlass(cornerRadius: 28, prominent: true)
+        .padding(tabScroll.isCompact ? 4 : 6)
+        .liquidGlass(cornerRadius: tabScroll.isCompact ? 22 : 28, prominent: true)
         .accessibilityElement(children: .contain)
     }
 
@@ -69,17 +75,21 @@ struct RootTabView: View {
                 selected = tab
             }
         } label: {
-            VStack(spacing: 4) {
+            VStack(spacing: tabScroll.isCompact ? 0 : 4) {
                 Image(systemName: tab.systemImage)
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: tabScroll.isCompact ? 16 : 18, weight: .semibold))
                     .symbolEffect(.bounce, value: isSelected)
-                    .frame(height: 22)
-                Text(tab.title)
-                    .font(.caption2.weight(.semibold))
+                    .frame(height: tabScroll.isCompact ? 18 : 22)
+
+                if !tabScroll.isCompact {
+                    Text(tab.title)
+                        .font(.caption2.weight(.semibold))
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
             }
             .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.72))
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
+            .padding(.vertical, tabScroll.isCompact ? 8 : 10)
             .background {
                 if isSelected {
                     Capsule(style: .continuous)
