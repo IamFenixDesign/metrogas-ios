@@ -2,6 +2,7 @@ import SwiftUI
 
 struct InvoiceListView: View {
     @EnvironmentObject private var store: AccountDataStore
+    @EnvironmentObject private var tabScroll: TabBarScrollState
     @State private var appear = false
 
     private var pendingCount: Int {
@@ -33,6 +34,7 @@ struct InvoiceListView: View {
                     invoiceScroll
                 }
             }
+            .tracksFloatingTabBar(tabScroll)
             .background { LiquidGlassBackground() }
             .navigationTitle("Facturas")
             .navigationBarTitleDisplayMode(.large)
