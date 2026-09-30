@@ -2,13 +2,16 @@ import Foundation
 import UserNotifications
 import Combine
 
+/// Recordatorios locales nativos de iOS (`UNUserNotificationCenter`).
 @MainActor
-final class ReminderService: ObservableObject {
+final class ReminderService: NSObject, ObservableObject {
     @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published var remindersEnabled: Bool {
-        didSet { UserDefaults.standard.set(remindersEnabled, forKey: Keys.enabled) }
+        didSet {
+            UserDefaults.standard.set(remindersEnabled, forKey: Keys.enabled)
+        }
     }
-    /// Days before due date to fire the reminder (1–7).
+    /// Días antes del vencimiento (1–7).
     @Published var daysBeforeDue: Int {
         didSet { UserDefaults.standard.set(daysBeforeDue, forKey: Keys.daysBefore) }
     }
@@ -18,10 +21,12 @@ final class ReminderService: ObservableObject {
         static let daysBefore = "metrogas.reminders.daysBefore"
     }
 
-    init() {
+    override init() {
         remindersEnabled = UserDefaults.standard.object(forKey: Keys.enabled) as? Bool ?? true
         let stored = UserDefaults.standard.object(forKey: Keys.daysBefore) as? Int ?? 3
         daysBeforeDue = min(max(stored, 1), 7)
+        super.init()
+        UNUserNotificationCenter.current().delegate = self
     }
 
     func refreshAuthorizationStatus() async {
@@ -29,8 +34,9 @@ final class ReminderService: ObservableObject {
         authorizationStatus = settings.authorizationStatus
     }
 
+    /// Pide el permiso nativo de iOS al entrar a la app (solo si aún no se decidió).
     @discardableResult
-    func requestPermissionIfNeeded() async -> Bool {
+    func requestPermissionOnLaunch() async -> Bool {
         await refreshAuthorizationStatus()
         switch authorizationStatus {
         case .authorized, .provisional, .ephemeral:
@@ -52,9 +58,22 @@ final class ReminderService: ObservableObject {
         }
     }
 
+    @discardableResult
+    func requestPermissionIfNeeded() async -> Bool {
+        await requestPermissionOnLaunch()
+    }
+
+    var isAuthorized: Bool {
+        switch authorizationStatus {
+        case .authorized, .provisional, .ephemeral: return true
+        default: return false
+        }
+    }
+
     func reschedule(for invoices: [Invoice]) async {
         let center = UNUserNotificationCenter.current()
         center.removeAllPendingNotificationRequests()
+        try? await center.setBadgeCount(0)
 
         guard remindersEnabled else { return }
         let granted = await requestPermissionIfNeeded()
@@ -64,7 +83,6 @@ final class ReminderService: ObservableObject {
         let unpaid = invoices.filter { $0.status == .pending || $0.status == .overdue }
 
         for invoice in unpaid {
-            // Reminder N days before due, at 10:00 local.
             guard let remindDay = calendar.date(byAdding: .day, value: -daysBeforeDue, to: invoice.dueDate) else {
                 continue
             }
@@ -72,7 +90,6 @@ final class ReminderService: ObservableObject {
             components.hour = 10
             components.minute = 0
 
-            // Also notify on the due date morning if still unpaid.
             var dueComponents = calendar.dateComponents([.year, .month, .day], from: invoice.dueDate)
             dueComponents.hour = 9
             dueComponents.minute = 0
@@ -102,7 +119,6 @@ final class ReminderService: ObservableObject {
         components: DateComponents,
         center: UNUserNotificationCenter
     ) {
-        // Skip if the fire date is already in the past.
         if let fire = Calendar.current.date(from: components), fire < Date() {
             return
         }
@@ -111,10 +127,20 @@ final class ReminderService: ObservableObject {
         content.title = title
         content.body = body
         content.sound = .default
-        content.badge = 1
+        content.badge = NSNumber(value: 1)
 
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
         let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
         center.add(request)
+    }
+}
+
+extension ReminderService: UNUserNotificationCenterDelegate {
+    /// Muestra banner/sonido nativos también con la app abierta.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound, .badge]
     }
 }

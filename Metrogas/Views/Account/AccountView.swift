@@ -5,7 +5,6 @@ struct AccountView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var reminders: ReminderService
     @State private var showLogoutConfirm = false
-    @State private var permissionMessage: String?
     @State private var customerNumberError: String?
 
     var body: some View {
@@ -68,6 +67,9 @@ struct AccountView: View {
 
                     Section {
                         Toggle("Recordatorios de vencimiento", isOn: $reminders.remindersEnabled)
+                            .onChange(of: reminders.remindersEnabled) { _, _ in
+                                Task { await reminders.reschedule(for: store.invoices) }
+                            }
 
                         Stepper(
                             "Avisar \(reminders.daysBeforeDue) día\(reminders.daysBeforeDue == 1 ? "" : "s") antes",
@@ -75,21 +77,17 @@ struct AccountView: View {
                             in: 1...7
                         )
                         .disabled(!reminders.remindersEnabled)
-
-                        Button("Activar notificaciones") {
-                            Task {
-                                let granted = await reminders.requestPermissionIfNeeded()
-                                await reminders.reschedule(for: store.invoices)
-                                permissionMessage = granted
-                                    ? "Notificaciones activadas."
-                                    : "Revisá el permiso en Ajustes → Metrogas."
-                            }
+                        .onChange(of: reminders.daysBeforeDue) { _, _ in
+                            Task { await reminders.reschedule(for: store.invoices) }
                         }
-                        .disabled(!reminders.remindersEnabled)
                     } header: {
                         Text("Recordatorios")
                     } footer: {
-                        Text("Avisos locales según tus facturas sincronizadas en la app.")
+                        if reminders.authorizationStatus == .denied {
+                            Text("Las notificaciones están desactivadas. Activalas en Ajustes → Metrogas → Notificaciones.")
+                        } else {
+                            Text("Avisos nativos de iOS según tus facturas sincronizadas.")
+                        }
                     }
 
                     Section("Preferencias") {
@@ -139,14 +137,6 @@ struct AccountView: View {
                 }
             } message: {
                 Text("Vas a salir de tu cuenta MetroGAS en esta app.")
-            }
-            .alert("Recordatorios", isPresented: Binding(
-                get: { permissionMessage != nil },
-                set: { if !$0 { permissionMessage = nil } }
-            )) {
-                Button("Listo", role: .cancel) { permissionMessage = nil }
-            } message: {
-                Text(permissionMessage ?? "")
             }
         }
     }
