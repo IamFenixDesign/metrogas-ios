@@ -26,7 +26,8 @@ final class PortalDataBridge: NSObject {
         case saldos
     }
 
-    /// Flujo completo: descubrir cuenta con la sesión y sincronizar M360.
+    /// Flujo completo: si la cuenta Google/MetroGAS ya tiene N° de cliente asociado,
+    /// carga M360 al toque; si no, lo descubre en el portal autenticado y sincroniza.
     func syncFromSession(
         loginHint: String?,
         preferredAccountId: String?,
@@ -39,7 +40,41 @@ final class PortalDataBridge: NSObject {
             account.holderName = local.replacingOccurrences(of: ".", with: " ").capitalized
         }
 
-        // 1) Portal autenticado: N° de cliente / titular / lo que exponga la OV.
+        // Camino rápido: la cuenta de login ya tiene N° de cliente vinculado.
+        if let linkedId = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "") {
+            let saldos = try await runCapture(
+                mode: .saldos,
+                accountId: linkedId,
+                loginHint: loginHint,
+                startURLs: [MetrogasURLs.saldosGo(accountId: linkedId)],
+                timeoutSeconds: max(24, timeoutSeconds * 0.7)
+            )
+            account = MetrogasJSONParser.mergeAccount(account, saldos.account)
+            account.customerNumber = linkedId
+            var invoices = saldos.invoices
+            var readings = saldos.readings
+            if readings.isEmpty && !invoices.isEmpty {
+                readings = MetrogasJSONParser.deriveReadings(from: invoices)
+            }
+            // Enriquecer perfil desde portal si faltan datos del titular.
+            if account.holderName.isEmpty || account.supplyAddress == "—" || account.supplyAddress.isEmpty {
+                if let enriched = try? await runCapture(
+                    mode: .discover,
+                    accountId: "",
+                    loginHint: loginHint,
+                    startURLs: [MetrogasURLs.portalOV2, MetrogasURLs.portalMobile],
+                    timeoutSeconds: min(12, timeoutSeconds * 0.3)
+                ) {
+                    account = MetrogasJSONParser.mergeAccount(account, enriched.account)
+                    account.customerNumber = linkedId
+                    invoices = mergeInvoices(invoices, enriched.invoices)
+                    readings = mergeReadings(readings, enriched.readings)
+                }
+            }
+            return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+        }
+
+        // 1) Portal autenticado: descubrir N° de cliente ligado a esta sesión.
         let discovery = try await runCapture(
             mode: .discover,
             accountId: "",
@@ -58,10 +93,10 @@ final class PortalDataBridge: NSObject {
         var readings = discovery.readings
 
         let discoveredId =
-            MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "")
-            ?? MetrogasURLs.normalizedCustomerNumber(discovery.account.customerNumber)
+            MetrogasURLs.normalizedCustomerNumber(discovery.account.customerNumber)
             ?? extractCustomerNumber(from: discovery)
             ?? extractCustomerNumber(fromDOM: discovery)
+            ?? MetrogasJSONParser.firstCustomerNumber(in: domTextAfterLastCapture(discovery))
 
         guard let accountId = discoveredId else {
             return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
@@ -69,7 +104,7 @@ final class PortalDataBridge: NSObject {
 
         account.customerNumber = accountId
 
-        // 2) Saldos M360 con el N° descubierto (o el ya persistido).
+        // 2) Saldos M360 con el N° descubierto en la sesión.
         let saldos = try await runCapture(
             mode: .saldos,
             accountId: accountId,
@@ -88,6 +123,16 @@ final class PortalDataBridge: NSObject {
         }
 
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+    }
+
+    private func domTextAfterLastCapture(_ snapshot: MetrogasDataSnapshot) -> String {
+        // El DOM crudo ya se aplicó al snapshot; reutilizamos campos de cuenta.
+        [
+            snapshot.account.customerNumber,
+            snapshot.account.supplyAddress,
+            snapshot.account.holderName,
+            snapshot.account.email
+        ].joined(separator: " ")
     }
 
     /// Solo saldos (cuando ya hay N° de cliente).
@@ -320,13 +365,86 @@ final class PortalDataBridge: NSObject {
     })();
     """
 
-    /// Desde el portal autenticado, prueba endpoints típicos y reporta JSON.
+    /// Desde el portal autenticado, prueba endpoints, lee storage/UI5 y reporta el N° ligado.
     private static let discoveryProbeScript = """
     (function() {
       if (window.__metrogasDiscoveryProbe) return;
       window.__metrogasDiscoveryProbe = true;
       function post(type, payload) {
         try { window.webkit.messageHandlers.metrogasSync.postMessage({type: type, payload: payload}); } catch (e) {}
+      }
+      function collectElevenDigitIds(text) {
+        var out = [];
+        if (!text) return out;
+        var re = /\\b(\\d{11})\\b/g;
+        var m;
+        while ((m = re.exec(String(text))) !== null) {
+          if (out.indexOf(m[1]) === -1) out.push(m[1]);
+        }
+        return out;
+      }
+      function walk(node, bag, depth) {
+        if (!node || depth > 8) return;
+        if (typeof node === 'string' || typeof node === 'number') {
+          collectElevenDigitIds(String(node)).forEach(function(id) {
+            if (bag.indexOf(id) === -1) bag.push(id);
+          });
+          return;
+        }
+        if (Array.isArray(node)) {
+          node.slice(0, 80).forEach(function(item) { walk(item, bag, depth + 1); });
+          return;
+        }
+        if (typeof node === 'object') {
+          Object.keys(node).forEach(function(k) {
+            var lk = k.toLowerCase();
+            var val = node[k];
+            if (lk.indexOf('account') !== -1 || lk.indexOf('cliente') !== -1 || lk.indexOf('cust') !== -1 || lk.indexOf('cuenta') !== -1 || lk.indexOf('contrato') !== -1 || lk === 'vkont') {
+              walk(val, bag, depth + 1);
+            } else {
+              walk(val, bag, depth + 1);
+            }
+          });
+        }
+      }
+      var found = [];
+      try {
+        walk(window.localStorage, found, 0);
+        walk(window.sessionStorage, found, 0);
+        for (var i = 0; i < localStorage.length; i++) {
+          walk(localStorage.getItem(localStorage.key(i)), found, 0);
+        }
+        for (var j = 0; j < sessionStorage.length; j++) {
+          walk(sessionStorage.getItem(sessionStorage.key(j)), found, 0);
+        }
+      } catch (e) {}
+      try {
+        if (window.sap && sap.ui && sap.ui.getCore) {
+          var core = sap.ui.getCore();
+          if (core && core.getModel) {
+            ['', 'appModel', 'device', 'i18n'].forEach(function(name) {
+              try {
+                var model = name ? core.getModel(name) : core.getModel();
+                if (model && model.getData) walk(model.getData(), found, 0);
+              } catch (e2) {}
+            });
+          }
+        }
+      } catch (e) {}
+      try {
+        var text = document.body ? (document.body.innerText || '') : '';
+        collectElevenDigitIds(text).forEach(function(id) {
+          if (found.indexOf(id) === -1) found.push(id);
+        });
+        post('dom', { text: text.substring(0, 250000), href: location.href });
+      } catch (e) {}
+      if (found.length) {
+        post('net', {
+          url: '/metrogas/linked-account-discovery',
+          method: 'GET',
+          status: 200,
+          body: JSON.stringify({ accountId: found[0], linkedAccounts: found, source: 'portal-session' })
+        });
       }
       var paths = [
         '/OvServiceHub/api/v1/web/M360/account',
@@ -343,8 +461,14 @@ final class PortalDataBridge: NSObject {
         '/OvServiceHub/api/v1/secured/M360/invoices',
         '/OvServiceHub/api/v1/secured/M360/balance',
         '/OvServiceHub/api/v1/M360/account',
-        '/OvServiceHub/api/v1/M360/customer'
+        '/OvServiceHub/api/v1/M360/customer',
+        '/OvServiceHub/api/v1/M360/accounts'
       ];
+      var pending = paths.length;
+      function doneOne() {
+        pending--;
+        if (pending <= 0) post('discoverDone', { href: location.href, linked: found });
+      }
       paths.forEach(function(path) {
         try {
           var xhr = new XMLHttpRequest();
@@ -354,16 +478,13 @@ final class PortalDataBridge: NSObject {
           xhr.onreadystatechange = function() {
             if (xhr.readyState === 4) {
               post('net', { url: path, method: 'GET', status: xhr.status, body: (xhr.responseText || '').substring(0, 600000) });
+              doneOne();
             }
           };
           xhr.send();
-        } catch (e) {}
+        } catch (e) { doneOne(); }
       });
-      try {
-        var text = document.body ? (document.body.innerText || '') : '';
-        post('dom', { text: text.substring(0, 250000), href: location.href });
-      } catch (e) {}
-      post('discoverDone', { href: location.href });
+      setTimeout(function() { post('discoverDone', { href: location.href, linked: found }); }, 8000);
     })();
     """
 

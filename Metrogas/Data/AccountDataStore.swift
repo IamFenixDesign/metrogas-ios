@@ -27,10 +27,12 @@ final class AccountDataStore: ObservableObject {
 
     init() {
         loadCache()
-        if let saved = UserDefaults.standard.string(forKey: Keys.customerNumber),
-           let normalized = MetrogasURLs.normalizedCustomerNumber(saved) {
-            account.customerNumber = normalized
-            customerNumberDraft = normalized
+        if let linked = LinkedAccountStore.resolvePreferredCustomerNumber(
+            loginEmail: account.email.isEmpty ? LinkedAccountStore.lastBoundEmail() : account.email,
+            fallback: account.customerNumber
+        ) {
+            account.customerNumber = linked
+            customerNumberDraft = linked
         }
         needsCustomerNumber = false
     }
@@ -86,9 +88,18 @@ final class AccountDataStore: ObservableObject {
     }
 
     var resolvedCustomerNumber: String? {
-        MetrogasURLs.normalizedCustomerNumber(account.customerNumber)
-            ?? MetrogasURLs.normalizedCustomerNumber(customerNumberDraft)
-            ?? MetrogasURLs.normalizedCustomerNumber(UserDefaults.standard.string(forKey: Keys.customerNumber) ?? "")
+        LinkedAccountStore.resolvePreferredCustomerNumber(
+            loginEmail: account.email.isEmpty ? nil : account.email,
+            fallback: MetrogasURLs.normalizedCustomerNumber(account.customerNumber)
+                ?? MetrogasURLs.normalizedCustomerNumber(customerNumberDraft)
+        )
+    }
+
+    func preferredCustomerNumber(forLogin email: String?) -> String? {
+        LinkedAccountStore.resolvePreferredCustomerNumber(
+            loginEmail: email ?? account.email,
+            fallback: resolvedCustomerNumber
+        )
     }
 
     func invoice(id: String) -> Invoice? {
@@ -108,7 +119,7 @@ final class AccountDataStore: ObservableObject {
     }
 
     @discardableResult
-    func saveCustomerNumber(_ raw: String) -> Bool {
+    func saveCustomerNumber(_ raw: String, forEmail email: String? = nil) -> Bool {
         guard let normalized = MetrogasURLs.normalizedCustomerNumber(raw) else {
             syncMessage = "Ingresá el N° de cliente de 11 dígitos (como figura en tu factura)."
             needsCustomerNumber = true
@@ -116,7 +127,7 @@ final class AccountDataStore: ObservableObject {
         }
         account.customerNumber = normalized
         customerNumberDraft = normalized
-        UserDefaults.standard.set(normalized, forKey: Keys.customerNumber)
+        LinkedAccountStore.bind(email: email ?? account.email, customerNumber: normalized)
         needsCustomerNumber = false
         persistCache()
         return true
@@ -132,6 +143,12 @@ final class AccountDataStore: ObservableObject {
             let local = trimmed.split(separator: "@").first.map(String.init) ?? trimmed
             account.holderName = local.replacingOccurrences(of: ".", with: " ").capitalized
         }
+        // Si este email ya tiene N° de cliente asociado, precargarlo para la sync automática.
+        if let linked = LinkedAccountStore.customerNumber(forEmail: trimmed) {
+            account.customerNumber = linked
+            customerNumberDraft = linked
+            needsCustomerNumber = false
+        }
         persistCache()
     }
 
@@ -143,12 +160,13 @@ final class AccountDataStore: ObservableObject {
         needsCustomerNumber = false
         defer { isLoading = false }
 
-        if let loginHint { applyLoginHint(email: loginHint) }
+        let email = loginHint ?? account.email
+        if let email { applyLoginHint(email: email) }
 
         let saved = CredentialStore.load()
         do {
             _ = try await MetrogasAuthService.shared.ensureActiveSession(
-                email: saved?.email ?? loginHint ?? account.email,
+                email: saved?.email ?? email,
                 password: saved?.password
             )
         } catch MetrogasAuthError.sessionExpired {
@@ -163,27 +181,28 @@ final class AccountDataStore: ObservableObject {
             // Seguimos: cookies de Google/portal pueden seguir válidas.
         }
 
+        // N° ya asociado a esta cuenta Google/MetroGAS → carga automática.
+        let linkedId = preferredCustomerNumber(forLogin: email)
+
         do {
             let snapshot = try await MetrogasDataService.shared.fetchAccountData(
-                loginHint: loginHint ?? account.email,
-                preferredAccountId: resolvedCustomerNumber
+                loginHint: email,
+                preferredAccountId: linkedId
             )
 
             var nextAccount = snapshot.account
-            if let id = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) {
+            if let id = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) ?? linkedId {
                 nextAccount.customerNumber = id
                 customerNumberDraft = id
-                UserDefaults.standard.set(id, forKey: Keys.customerNumber)
+                LinkedAccountStore.bind(email: email ?? nextAccount.email, customerNumber: id)
                 needsCustomerNumber = false
-            } else if let kept = resolvedCustomerNumber {
-                nextAccount.customerNumber = kept
             }
 
             if nextAccount.email.isEmpty {
-                nextAccount.email = loginHint ?? account.email
+                nextAccount.email = email ?? ""
             }
             if nextAccount.holderName.isEmpty {
-                applyLoginHint(email: loginHint ?? account.email)
+                applyLoginHint(email: email)
                 nextAccount.holderName = account.holderName
             }
 
@@ -197,7 +216,7 @@ final class AccountDataStore: ObservableObject {
             if MetrogasURLs.normalizedCustomerNumber(account.customerNumber) == nil
                 && snapshot.invoices.isEmpty {
                 needsCustomerNumber = true
-                syncMessage = "No pudimos leer el N° de cliente de tu Oficina Virtual. Si lo sabés, cargalo en Cuenta."
+                syncMessage = "Tu usuario no tiene un N° de cliente asociado todavía. Si lo sabés, cargalo en Cuenta una vez y queda vinculado."
             } else if snapshot.invoices.isEmpty && snapshot.readings.isEmpty {
                 syncMessage = "Sesión activa. Todavía no llegaron facturas/consumo; en unos segundos se reintenta solo."
             } else {
@@ -236,7 +255,7 @@ final class AccountDataStore: ObservableObject {
             UserDefaults.standard.set(data, forKey: Keys.cache)
         }
         if let normalized = MetrogasURLs.normalizedCustomerNumber(account.customerNumber) {
-            UserDefaults.standard.set(normalized, forKey: Keys.customerNumber)
+            LinkedAccountStore.bind(email: account.email, customerNumber: normalized)
         }
     }
 

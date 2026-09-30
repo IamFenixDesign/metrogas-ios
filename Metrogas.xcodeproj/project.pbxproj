@@ -37,6 +37,7 @@
 		A10000000000000000000023 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000023 /* CredentialStore.swift */; };
 		A10000000000000000000024 /* PortalDataBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000024 /* PortalDataBridge.swift */; };
 		A10000000000000000000025 /* MetrogasJSONParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000025 /* MetrogasJSONParser.swift */; };
+		A10000000000000000000026 /* LinkedAccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000026 /* LinkedAccountStore.swift */; };
 		A10000000000000000000020 /* InvoiceDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* InvoiceDetailView.swift */; };
 		A10000000000000000000021 /* InvoiceRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000021 /* InvoiceRowView.swift */; };
 		A10000000000000000000022 /* UpcomingDueSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000022 /* UpcomingDueSection.swift */; };
@@ -73,6 +74,7 @@
 		B10000000000000000000023 /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
 		B10000000000000000000024 /* PortalDataBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalDataBridge.swift; sourceTree = "<group>"; };
 		B10000000000000000000025 /* MetrogasJSONParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetrogasJSONParser.swift; sourceTree = "<group>"; };
+		B10000000000000000000026 /* LinkedAccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkedAccountStore.swift; sourceTree = "<group>"; };
 		B10000000000000000000020 /* InvoiceDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoiceDetailView.swift; sourceTree = "<group>"; };
 		B10000000000000000000021 /* InvoiceRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoiceRowView.swift; sourceTree = "<group>"; };
 		B10000000000000000000022 /* UpcomingDueSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpcomingDueSection.swift; sourceTree = "<group>"; };
@@ -141,6 +143,7 @@
 				B1000000000000000000001B /* MetrogasAuthService.swift */,
 				B1000000000000000000001F /* MetrogasDataService.swift */,
 				B10000000000000000000025 /* MetrogasJSONParser.swift */,
+				B10000000000000000000026 /* LinkedAccountStore.swift */,
 				B10000000000000000000024 /* PortalDataBridge.swift */,
 				B10000000000000000000023 /* CredentialStore.swift */,
 				B1000000000000000000001C /* WebCookieBridge.swift */,
@@ -334,6 +337,7 @@
 				A1000000000000000000001B /* MetrogasAuthService.swift in Sources */,
 				A1000000000000000000001F /* MetrogasDataService.swift in Sources */,
 				A10000000000000000000025 /* MetrogasJSONParser.swift in Sources */,
+				A10000000000000000000026 /* LinkedAccountStore.swift in Sources */,
 				A10000000000000000000024 /* PortalDataBridge.swift in Sources */,
 				A10000000000000000000023 /* CredentialStore.swift in Sources */,
 				A1000000000000000000001C /* WebCookieBridge.swift in Sources */,

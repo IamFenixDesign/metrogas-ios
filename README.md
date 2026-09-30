@@ -17,7 +17,7 @@ open Metrogas.xcodeproj
 ```
 
 1. Ingresá con **email/contraseña** o **Continuar con Google** (abre solo el login de Google).
-2. Al entrar, la app **sincroniza sola** facturas, saldo, consumo y datos de tu cuenta MetroGAS.
+2. Si esa cuenta ya tiene un **N° de cliente asociado**, facturas/saldo/consumo cargan solos.
 3. Usá las pestañas nativas: Inicio, Facturas, Consumo, Cuenta.
 
 ## IPA

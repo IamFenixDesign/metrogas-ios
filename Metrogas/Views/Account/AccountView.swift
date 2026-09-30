@@ -36,8 +36,8 @@ struct AccountView: View {
                                     .font(.caption)
                                     .foregroundStyle(MetrogasTheme.brandFlame)
                             }
-                            Button("Guardar N° de cliente") {
-                                if store.saveCustomerNumber(store.customerNumberDraft) {
+                            Button("Vincular a esta cuenta") {
+                                if store.saveCustomerNumber(store.customerNumberDraft, forEmail: session.loginEmail) {
                                     customerNumberError = nil
                                     Task { await store.refresh(loginHint: session.loginEmail) }
                                 } else {
@@ -48,7 +48,7 @@ struct AccountView: View {
                         } header: {
                             Text("Respaldo N° de cliente")
                         } footer: {
-                            Text("Solo si la Oficina Virtual no pudo leerlo sola. Aparece en tu factura.")
+                            Text("Solo si tu usuario Google/MetroGAS todavía no tiene N° asociado. Queda vinculado a esta cuenta para las próximas veces.")
                         }
                     }
 

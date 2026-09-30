@@ -18,6 +18,12 @@ enum MetrogasJSONParser {
             account = mergeAccount(account, m360.account)
         }
 
+        // Si el JSON trae un N° de cliente asociado (cuenta Google/MetroGAS), capturarlo.
+        if MetrogasURLs.normalizedCustomerNumber(account.customerNumber) == nil,
+           let found = firstCustomerNumber(inJSON: root) {
+            account.customerNumber = found
+        }
+
         if invoices.isEmpty || readings.isEmpty {
             for array in collectArrays(from: root) {
                 let asInvoices = array.compactMap { parseInvoice(from: $0) }
@@ -108,6 +114,49 @@ enum MetrogasJSONParser {
 
     static func firstEmail(in text: String) -> String? {
         firstMatch(text, #"([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})"#)
+    }
+
+    /// Busca un N° de cliente de 11 dígitos en cualquier JSON (portal / M360).
+    static func firstCustomerNumber(inJSON node: Any, depth: Int = 0) -> String? {
+        guard depth < 10 else { return nil }
+
+        if let dict = node as? [String: Any] {
+            let priorityKeys = [
+                "accountId", "custNumber", "customerNumber", "NroCliente", "nroCliente",
+                "NRO_CLIENTE", "ctaContrato", "CUENTA", "VKONT", "contrato", "Contrato",
+                "PVE_NRO_CLIENTE", "account", "cuenta"
+            ]
+            for key in priorityKeys {
+                if let raw = stringValue(dict, keys: [key]),
+                   let normalized = MetrogasURLs.normalizedCustomerNumber(raw) {
+                    return normalized
+                }
+                // A veces CUENTA viene con más dígitos y el cliente son los últimos 11.
+                if let raw = stringValue(dict, keys: [key]) {
+                    let digits = raw.filter(\.isNumber)
+                    if digits.count > 11,
+                       let normalized = MetrogasURLs.normalizedCustomerNumber(String(digits.suffix(11))) {
+                        return normalized
+                    }
+                }
+            }
+            for value in dict.values {
+                if let found = firstCustomerNumber(inJSON: value, depth: depth + 1) {
+                    return found
+                }
+            }
+        } else if let array = node as? [Any] {
+            for item in array {
+                if let found = firstCustomerNumber(inJSON: item, depth: depth + 1) {
+                    return found
+                }
+            }
+        } else if let s = node as? String {
+            return MetrogasURLs.normalizedCustomerNumber(s) ?? firstCustomerNumber(in: s)
+        } else if let n = node as? NSNumber {
+            return MetrogasURLs.normalizedCustomerNumber(n.stringValue)
+        }
+        return nil
     }
 
     static func deriveReadings(from invoices: [Invoice]) -> [ConsumptionReading] {
