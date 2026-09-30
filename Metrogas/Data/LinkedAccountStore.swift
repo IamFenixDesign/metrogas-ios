@@ -24,6 +24,16 @@ enum LinkedAccountStore {
         UserDefaults.standard.set(email, forKey: lastEmailKey)
     }
 
+    /// Quita un vínculo erróneo (p. ej. N° inventado por scrape) para forzar rediscovery.
+    static func unbind(email: String?) {
+        guard let key = storageKey(for: email), let email = normalizedEmail(email) else { return }
+        UserDefaults.standard.removeObject(forKey: key)
+        if lastBoundEmail()?.lowercased() == email {
+            UserDefaults.standard.removeObject(forKey: lastEmailKey)
+            UserDefaults.standard.removeObject(forKey: globalCustomerKey)
+        }
+    }
+
     static func lastBoundEmail() -> String? {
         UserDefaults.standard.string(forKey: lastEmailKey)
     }

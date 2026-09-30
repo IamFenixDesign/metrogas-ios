@@ -207,7 +207,7 @@ final class AccountDataStore: ObservableObject {
         needsCustomerNumber = false
         defer { isLoading = false }
 
-        // Identidad fresca (Google) antes de elegir N° vinculado.
+        // Email de login / Google. El N° solo viene de vínculo confirmado o discovery/M360.
         let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
         let emailHint: String? = {
             if let loginHint, !loginHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -217,11 +217,6 @@ final class AccountDataStore: ObservableObject {
             return account.email.isEmpty ? nil : account.email
         }()
         if let emailHint { applyLoginHint(email: emailHint) }
-        if let customer = identity.customerNumber {
-            LinkedAccountStore.bind(email: emailHint, customerNumber: customer)
-            account.customerNumber = customer
-            customerNumberDraft = customer
-        }
 
         let saved = CredentialStore.load()
         do {
@@ -241,8 +236,9 @@ final class AccountDataStore: ObservableObject {
             // Seguimos: cookies de Google/portal pueden seguir válidas.
         }
 
-        // N° ya asociado a esta cuenta Google/MetroGAS → carga automática.
-        let linkedId = preferredCustomerNumber(forLogin: emailHint) ?? identity.customerNumber
+        // Solo N° ya vinculado a ESTE email (o etiquetado con alta confianza).
+        let linkedId = preferredCustomerNumber(forLogin: emailHint)
+            ?? identity.customerNumber
 
         do {
             let snapshot = try await MetrogasDataService.shared.fetchAccountData(
@@ -251,11 +247,25 @@ final class AccountDataStore: ObservableObject {
             )
 
             var nextAccount = snapshot.account
-            if let id = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) ?? linkedId {
+            let confirmedId = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber)
+            if let id = confirmedId {
                 nextAccount.customerNumber = id
                 customerNumberDraft = id
                 LinkedAccountStore.bind(email: emailHint ?? nextAccount.email, customerNumber: id)
                 needsCustomerNumber = false
+            } else if let linkedId,
+                      !snapshot.invoices.isEmpty {
+                // M360 respondió con facturas para el N° vinculado → confirmar vínculo.
+                nextAccount.customerNumber = linkedId
+                customerNumberDraft = linkedId
+                LinkedAccountStore.bind(email: emailHint ?? nextAccount.email, customerNumber: linkedId)
+                needsCustomerNumber = false
+            } else if let linkedId, snapshot.invoices.isEmpty,
+                      nextAccount.holderName.isEmpty {
+                // Vínculo previo erróneo (scrape): soltarlo para no mostrar datos ajenos.
+                LinkedAccountStore.unbind(email: emailHint)
+                nextAccount.customerNumber = "—"
+                customerNumberDraft = ""
             }
 
             // Email de login (Google) siempre gana como contacto de la sesión.
@@ -270,9 +280,16 @@ final class AccountDataStore: ObservableObject {
                 account.holderName = ""
             }
 
-            // Preferir datos frescos de M360; conservar caché solo en campos vacíos.
+            // Datos frescos de M360 pisan caché de perfil cuando hay titular/dirección reales.
             account = MetrogasJSONParser.mergeAccount(account, nextAccount)
-            // Conservar caché previa si la red devolvió vacío (evita borrar pagadas).
+            if !nextAccount.holderName.isEmpty { account.holderName = nextAccount.holderName }
+            if !nextAccount.supplyAddress.isEmpty, nextAccount.supplyAddress != "—" {
+                account.supplyAddress = nextAccount.supplyAddress
+            }
+            if let confirmedId {
+                account.customerNumber = confirmedId
+            }
+
             if !snapshot.invoices.isEmpty {
                 invoices = snapshot.invoices
             } else if invoices.isEmpty {

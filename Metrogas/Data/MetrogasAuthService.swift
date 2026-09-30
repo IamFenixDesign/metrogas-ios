@@ -222,47 +222,41 @@ actor MetrogasAuthService {
         return identity.email
     }
 
-    /// Email + N° de cliente descubiertos rápido vía cookies/HTML (sin WebView).
+    /// Email de la sesión (cookies/HTML).
+    /// El N° de cliente NO se inventa acá: solo sale de vínculos confirmados o de M360/discovery etiquetado.
     func resolveSignedInIdentity() async -> (email: String?, customerNumber: String?) {
         var email: String?
-        var customerNumber: String?
 
-        // 1) Cookies IdP / portal (priorizar nombres de usuario/email).
+        // 1) Cookies IdP / portal con nombre de usuario/email (no scrapear N° sueltos).
         if let cookies = cookieJar.cookies {
             let prioritized = cookies.sorted { a, b in
                 scoreCookieForEmail(a) > scoreCookieForEmail(b)
             }
-            for cookie in prioritized {
-                if email == nil, let found = MetrogasJSONParser.firstEmail(in: cookie.value) {
-                    // Evitar emails basura de trackers.
-                    if !found.contains("example.") && !found.hasSuffix(".local") {
-                        email = found.lowercased()
-                    }
+            for cookie in prioritized where scoreCookieForEmail(cookie) >= 5 {
+                if let found = MetrogasJSONParser.firstEmail(in: cookie.value),
+                   !found.contains("example."),
+                   !found.hasSuffix(".local") {
+                    email = found.lowercased()
+                    break
                 }
-                if customerNumber == nil,
-                   let found = MetrogasJSONParser.firstCustomerNumber(in: cookie.value) {
-                    customerNumber = found
-                }
-                if email != nil, customerNumber != nil { break }
             }
         }
 
-        // 2) HTML del portal autenticado (rápido, 1–2 requests).
-        for url in [MetrogasURLs.portalOV2, MetrogasURLs.portalMobile, MetrogasURLs.accesoOV2] {
+        // 2) HTML del portal: email si falta. N° solo con etiqueta clara.
+        var labeledCustomer: String?
+        for url in [MetrogasURLs.portalOV2, MetrogasURLs.portalMobile] {
             guard let html = try? await loadHTML(url) else { continue }
             if email == nil, let found = MetrogasJSONParser.firstEmail(in: html) {
                 email = found.lowercased()
             }
-            if customerNumber == nil,
-               let found = MetrogasJSONParser.firstCustomerNumber(in: html) {
-                customerNumber = found
+            if labeledCustomer == nil {
+                labeledCustomer = MetrogasJSONParser.labeledCustomerNumber(in: html)
             }
-            if email != nil, customerNumber != nil { break }
-            // Shell autenticado sin N° visible: no seguir spameando.
+            if email != nil, labeledCustomer != nil { break }
             if looksLikeAuthenticatedPortal(html: html, urlHint: url) { break }
         }
 
-        return (email, customerNumber)
+        return (email, labeledCustomer)
     }
 
     private func scoreCookieForEmail(_ cookie: HTTPCookie) -> Int {

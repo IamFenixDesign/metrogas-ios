@@ -75,8 +75,8 @@ final class PortalDataBridge: NSObject {
         let discoveredId =
             MetrogasURLs.normalizedCustomerNumber(discovery.account.customerNumber)
             ?? extractCustomerNumber(from: discovery)
-            ?? extractCustomerNumber(fromDOM: discovery)
-            ?? MetrogasJSONParser.firstCustomerNumber(in: domTextAfterLastCapture(discovery))
+            ?? MetrogasJSONParser.labeledCustomerNumber(in: domText)
+            ?? MetrogasJSONParser.labeledCustomerNumber(in: domTextAfterLastCapture(discovery))
 
         guard let accountId = discoveredId else {
             return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
@@ -259,15 +259,8 @@ final class PortalDataBridge: NSObject {
     }
 
     private func extractCustomerNumber(fromDOM snapshot: MetrogasDataSnapshot) -> String? {
-        // El parser DOM ya pudo setear customerNumber; también buscamos en invoices.
-        if let id = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) {
-            return id
-        }
-        for inv in snapshot.invoices {
-            if let id = MetrogasURLs.normalizedCustomerNumber(inv.number) { return id }
-            if let id = MetrogasURLs.normalizedCustomerNumber(inv.supplyPoint) { return id }
-        }
-        return nil
+        // Nunca usar nro. de factura como N° de cliente (son 11 dígitos distintos).
+        MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber)
     }
 
     private func mergeInvoices(_ a: [Invoice], _ b: [Invoice]) -> [Invoice] {
@@ -363,31 +356,42 @@ final class PortalDataBridge: NSObject {
         }
         return out;
       }
-      function walk(node, bag, depth) {
+      function isAccountKey(k) {
+        var lk = String(k || '').toLowerCase();
+        return lk.indexOf('account') !== -1 || lk.indexOf('cliente') !== -1
+          || lk.indexOf('cust') !== -1 || lk.indexOf('cuenta') !== -1
+          || lk.indexOf('contrato') !== -1 || lk === 'vkont'
+          || lk.indexOf('cta') !== -1 || lk.indexOf('nro_cliente') !== -1;
+      }
+      function walk(node, bag, depth, fromAccountKey) {
         if (!node || depth > 7) return;
         if (typeof node === 'string' || typeof node === 'number') {
-          collectElevenDigitIds(String(node)).forEach(function(id) {
-            if (bag.indexOf(id) === -1) bag.push(id);
-          });
+          if (fromAccountKey) {
+            collectElevenDigitIds(String(node)).forEach(function(id) {
+              if (bag.indexOf(id) === -1) bag.push(id);
+            });
+          }
           return;
         }
         if (Array.isArray(node)) {
-          node.slice(0, 60).forEach(function(item) { walk(item, bag, depth + 1); });
+          node.slice(0, 60).forEach(function(item) { walk(item, bag, depth + 1, fromAccountKey); });
           return;
         }
         if (typeof node === 'object') {
           Object.keys(node).forEach(function(k) {
-            walk(node[k], bag, depth + 1);
+            walk(node[k], bag, depth + 1, fromAccountKey || isAccountKey(k));
           });
         }
       }
       var found = [];
       try {
         for (var i = 0; i < localStorage.length; i++) {
-          walk(localStorage.getItem(localStorage.key(i)), found, 0);
+          var lk = localStorage.key(i);
+          walk(localStorage.getItem(lk), found, 0, isAccountKey(lk));
         }
         for (var j = 0; j < sessionStorage.length; j++) {
-          walk(sessionStorage.getItem(sessionStorage.key(j)), found, 0);
+          var sk = sessionStorage.key(j);
+          walk(sessionStorage.getItem(sk), found, 0, isAccountKey(sk));
         }
       } catch (e) {}
       try {
@@ -397,7 +401,7 @@ final class PortalDataBridge: NSObject {
             ['', 'appModel'].forEach(function(name) {
               try {
                 var model = name ? core.getModel(name) : core.getModel();
-                if (model && model.getData) walk(model.getData(), found, 0);
+                if (model && model.getData) walk(model.getData(), found, 0, false);
               } catch (e2) {}
             });
           }
@@ -405,9 +409,9 @@ final class PortalDataBridge: NSObject {
       } catch (e) {}
       try {
         var text = document.body ? (document.body.innerText || '') : '';
-        collectElevenDigitIds(text).forEach(function(id) {
-          if (found.indexOf(id) === -1) found.push(id);
-        });
+        // Solo etiquetados en DOM visible (no cualquier bloque de 11 dígitos).
+        var labeled = text.match(/(?:N[°º]?\s*(?:de\s*)?cliente|Cliente|Contrato)\s*[:#]?\s*([0-9]{11})/i);
+        if (labeled && labeled[1] && found.indexOf(labeled[1]) === -1) found.unshift(labeled[1]);
         post('dom', { text: text.substring(0, 250000), href: location.href });
       } catch (e) {}
       if (found.length) {
@@ -608,19 +612,16 @@ extension PortalDataBridge: WKScriptMessageHandler {
         guard isList || isBilling else { return }
 
         Task { @MainActor in
+            // Esperar billing para titular/dirección; no cerrar solo con facturas.
+            if isList, !captured.contains(where: { $0.url.localizedCaseInsensitiveContains("publicbilling") }) {
+                return
+            }
             let early = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
             let hasInvoices = !early.invoices.isEmpty
             let hasProfile = !early.account.holderName.isEmpty
-                || MetrogasURLs.normalizedCustomerNumber(early.account.customerNumber) != nil
+                || (!early.account.supplyAddress.isEmpty && early.account.supplyAddress != "—")
             if hasInvoices && (hasProfile || isBilling) {
                 await completeIfNeeded()
-            } else if hasInvoices && isList {
-                try? await Task.sleep(nanoseconds: 900_000_000)
-                guard continuation != nil else { return }
-                let again = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
-                if !again.invoices.isEmpty {
-                    await completeIfNeeded()
-                }
             }
         }
     }

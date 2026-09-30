@@ -126,9 +126,7 @@ final class AppSession: ObservableObject {
             if let email = identity.email, !email.isEmpty {
                 loginEmail = email
             }
-            if let customer = identity.customerNumber {
-                LinkedAccountStore.bind(email: loginEmail, customerNumber: customer)
-            }
+            // No vincular N° acá: solo LinkedAccountStore confirmado o M360/discovery.
             lastLoginMethod = .google
             let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
             await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
@@ -193,25 +191,18 @@ final class AppSession: ObservableObject {
         if MetrogasURLs.isMetrogasPortalHost(host) {
             Task {
                 await WebCookieBridge.syncWebKitCookiesToHTTP()
-                // Siempre re-resolver identidad Google/SAP (no conservar un email viejo).
+                // Re-resolver email Google/SAP. El N° de cliente lo confirma el sync M360.
                 var resolvedEmail = loginEmail
-                var resolvedCustomer: String?
                 for _ in 0..<6 {
                     let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
                     if let email = identity.email, !email.isEmpty {
                         resolvedEmail = email
+                        break
                     }
-                    if let customer = identity.customerNumber {
-                        resolvedCustomer = customer
-                    }
-                    if resolvedEmail != nil { break }
                     try? await Task.sleep(nanoseconds: 300_000_000)
                 }
                 if let resolvedEmail {
                     loginEmail = resolvedEmail
-                }
-                if let resolvedCustomer {
-                    LinkedAccountStore.bind(email: loginEmail, customerNumber: resolvedCustomer)
                 }
                 lastLoginMethod = .google
                 googleFlowActive = false

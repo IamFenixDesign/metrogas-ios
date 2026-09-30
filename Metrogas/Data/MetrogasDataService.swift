@@ -10,19 +10,9 @@ struct MetrogasDataSnapshot: Sendable {
 actor MetrogasDataService {
     static let shared = MetrogasDataService()
 
-    private let session: URLSession
-
-    private init() {
-        let config = URLSessionConfiguration.default
-        config.httpCookieStorage = HTTPCookieStorage.shared
-        config.httpCookieAcceptPolicy = .always
-        config.httpShouldSetCookies = true
-        config.timeoutIntervalForRequest = 18
-        session = URLSession(configuration: config)
-    }
+    private init() {}
 
     func fetchAccountData(loginHint: String?, preferredAccountId: String?) async throws -> MetrogasDataSnapshot {
-        // Identidad rápida desde cookies/HTML (Google) sin WebView.
         let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
         let email: String? = {
             if let loginHint, !loginHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -31,6 +21,7 @@ actor MetrogasDataService {
             return identity.email
         }()
 
+        // Preferir solo N° ya vinculado al email o etiquetado; nunca dígitos sueltos de cookies.
         let preferred =
             MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "")
             ?? identity.customerNumber
@@ -38,17 +29,32 @@ actor MetrogasDataService {
         var account = seedAccount(loginHint: email, customerNumber: preferred)
         let hasLinkedId = preferred != nil
 
-        // Camino rápido: N° ya conocido → solo M360 (sin discovery ni warm-up de portal).
-        let snapshot = try await PortalDataBridge.shared.syncFromSession(
+        var snapshot = try await PortalDataBridge.shared.syncFromSession(
             loginHint: email,
             preferredAccountId: preferred,
-            timeoutSeconds: hasLinkedId ? 16 : 22
+            timeoutSeconds: hasLinkedId ? 18 : 26
         )
 
+        // Si el N° vinculado no trajo perfil/facturas, fue un vínculo basura → rediscovery.
+        let linkedLooksEmpty = hasLinkedId
+            && snapshot.invoices.isEmpty
+            && snapshot.account.holderName.isEmpty
+            && (snapshot.account.supplyAddress.isEmpty || snapshot.account.supplyAddress == "—")
+
+        if linkedLooksEmpty, let email {
+            LinkedAccountStore.unbind(email: email)
+            snapshot = try await PortalDataBridge.shared.syncFromSession(
+                loginHint: email,
+                preferredAccountId: nil,
+                timeoutSeconds: 26
+            )
+        }
+
         account = MetrogasJSONParser.mergeAccount(account, snapshot.account)
-        if let id = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber)
-            ?? preferred {
+        if let id = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) {
             account.customerNumber = id
+        } else if !linkedLooksEmpty, let preferred {
+            account.customerNumber = preferred
         }
         if let email, !email.isEmpty {
             account.email = email
@@ -68,7 +74,6 @@ actor MetrogasDataService {
         if let customerNumber, let normalized = MetrogasURLs.normalizedCustomerNumber(customerNumber) {
             account.customerNumber = normalized
         }
-        // Solo email de login: el titular real viene de M360 (PVE_TITULAR).
         if let loginHint, !loginHint.isEmpty {
             account.email = loginHint
         }
