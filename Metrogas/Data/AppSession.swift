@@ -101,8 +101,10 @@ final class AppSession: ObservableObject {
 
         do {
             let snapshot = try await MetrogasDataService.shared.fetchByCustomerNumber(id)
-            let hasSignal = !snapshot.account.holderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || (!snapshot.account.supplyAddress.isEmpty && snapshot.account.supplyAddress != "—")
+            let profile = snapshot.account
+            let hasSignal = !profile.holderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || (!profile.supplyAddress.isEmpty && profile.supplyAddress != "—")
+                || (!profile.meterNumber.isEmpty && profile.meterNumber != "—")
                 || !snapshot.invoices.isEmpty
             guard hasSignal else {
                 loginError = "No encontramos datos para ese N° de cliente. Revisalo e intentá de nuevo."

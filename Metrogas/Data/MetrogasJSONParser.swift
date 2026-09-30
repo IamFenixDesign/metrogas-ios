@@ -16,8 +16,9 @@ enum MetrogasJSONParser {
             invoices = m360.invoices
             readings = m360.readings
             account = mergeAccount(account, m360.account)
-            // publicSubscription → email (y a veces teléfono).
-            if dict["subscriptionId"] != nil || dict["digInvEmail"] != nil || dict["TIPO"] != nil {
+            // publicSubscription / publicAccount → email, teléfono y a veces titular.
+            if dict["subscriptionId"] != nil || dict["digInvEmail"] != nil || dict["TIPO"] != nil
+                || dict["telNumber"] != nil || dict["email"] != nil || dict["EMAIL"] != nil {
                 account = mergeAccount(account, parseSubscription(dict))
             }
             account = enrichAccountFromAnyJSON(dict, into: account)
@@ -69,8 +70,16 @@ enum MetrogasJSONParser {
         }
 
         // publicbilling/r2 → info + deudas (solo adeudadas).
+        // publicAccount → a veces el perfil viene en la raíz o en "info"/"account".
         if let info = dict["info"] as? [String: Any] {
             account = mergeAccount(account, parseM360Info(info))
+        }
+        if let nested = dict["account"] as? [String: Any] {
+            account = mergeAccount(account, parseM360Info(nested))
+            account = mergeAccount(account, parseAccount(from: nested))
+        }
+        if dict["PVE_TITULAR"] != nil || dict["PVE_DIRECCION"] != nil || dict["meters"] != nil {
+            account = mergeAccount(account, parseM360Info(dict))
         }
         if let deudas = dict["deudas"] as? [String: Any],
            let items = deudas["items"] as? [[String: Any]] {
@@ -357,32 +366,48 @@ enum MetrogasJSONParser {
         var meterExtras: [String: Any] = [:]
         if let meters = info["meters"] as? [[String: Any]], let first = meters.first {
             meterExtras = first
-            if let n = stringValue(first, keys: ["NRO_MEDIDOR", "nro_medidor", "MEDIDOR"]) {
+            if let n = stringValue(first, keys: [
+                "NRO_MEDIDOR", "nro_medidor", "MEDIDOR", "meter", "meterNumber", "GERAET"
+            ]) {
                 meter = n
             }
+        } else if let n = stringValue(info, keys: ["NRO_MEDIDOR", "nro_medidor", "MEDIDOR", "meter", "meterNumber"]) {
+            meter = n
         }
 
-        // La SPA solo usa PVE_TITULAR / PVE_DIRECCION, pero billing puede traer más campos.
+        // La SPA usa PVE_TITULAR / PVE_DIRECCION / meters[].NRO_MEDIDOR;
+        // publicAccount / billing pueden traer más campos de contacto y categoría.
         let customer = firstNonEmpty(
-            stringValue(info, keys: ["PVE_NRO_CLIENTE", "NRO_CLIENTE", "accountId", "custNumber", "CUENTA", "VKONT"]),
-            fuzzyString(in: info, matching: ["cliente", "account", "vkont", "cuenta"])
+            stringValue(info, keys: [
+                "PVE_NRO_CLIENTE", "NRO_CLIENTE", "accountId", "custNumber", "CUENTA", "VKONT", "ctaContrato"
+            ]),
+            fuzzyString(in: info, matching: ["nro_cliente", "nrocliente", "vkont", "ctacontrato"])
         ) ?? "—"
 
         let address = firstNonEmpty(
-            stringValue(info, keys: ["PVE_DIRECCION", "direccion", "DOMICILIO", "CALLE", "address", "accountAddress"]),
-            fuzzyString(in: info, matching: ["direccion", "domicilio", "address", "calle"])
+            stringValue(info, keys: [
+                "PVE_DIRECCION", "direccion", "DOMICILIO", "CALLE", "address", "accountAddress",
+                "PVE_DOMICILIO", "STREET", "street"
+            ]),
+            fuzzyString(in: info, matching: ["direccion", "domicilio", "address", "calle"]),
+            fuzzyString(in: meterExtras, matching: ["direccion", "domicilio", "address", "calle"])
         ) ?? "—"
 
         var locality = firstNonEmpty(
-            stringValue(info, keys: ["PVE_LOCALIDAD", "LOCALIDAD", "localidad", "CITY", "PARTIDO", "partido", "BARRIO"]),
+            stringValue(info, keys: [
+                "PVE_LOCALIDAD", "LOCALIDAD", "localidad", "CITY", "PARTIDO", "partido", "BARRIO",
+                "PVE_PARTIDO", "ORT01", "city", "locality"
+            ]),
             fuzzyString(in: info, matching: ["localidad", "partido", "barrio", "city", "locality"]),
-            fuzzyString(in: meterExtras, matching: ["localidad", "partido"])
+            fuzzyString(in: meterExtras, matching: ["localidad", "partido", "barrio", "city"])
         ) ?? "—"
 
         var postal = firstNonEmpty(
-            stringValue(info, keys: ["PVE_CP", "PVE_CODIGO_POSTAL", "CODIGO_POSTAL", "CP", "cp", "postalCode", "ZIP"]),
-            fuzzyString(in: info, matching: ["postal", "codigopostal", "zip", "cpa"]),
-            fuzzyString(in: meterExtras, matching: ["postal", "cp"])
+            stringValue(info, keys: [
+                "PVE_CP", "PVE_CODIGO_POSTAL", "CODIGO_POSTAL", "CP", "cp", "postalCode", "ZIP", "PSTLZ"
+            ]),
+            fuzzyString(in: info, matching: ["postal", "codigopostal", "zip", "cpa", "pstlz"]),
+            fuzzyString(in: meterExtras, matching: ["postal", "cp", "pstlz"])
         ) ?? "—"
 
         // Muchas respuestas solo traen la dirección completa: sacar CP / localidad de ahí.
@@ -391,35 +416,52 @@ enum MetrogasJSONParser {
         if postal == "—" { postal = parsedAddress.postalCode ?? "—" }
 
         let email = firstNonEmpty(
-            stringValue(info, keys: ["PVE_EMAIL", "EMAIL", "email", "mail", "digInvEmail"]),
-            fuzzyString(in: info, matching: ["email", "mail"])
+            stringValue(info, keys: [
+                "PVE_EMAIL", "EMAIL", "email", "mail", "digInvEmail", "SMTP_ADDR", "emailOpt", "EMAIL_ID"
+            ]),
+            fuzzyString(in: info, matching: ["email", "smtp", "diginv"]),
+            fuzzyString(in: meterExtras, matching: ["email", "mail"])
         ) ?? ""
 
-        let phone = firstNonEmpty(
-            stringValue(info, keys: ["PVE_TELEFONO", "TELEFONO", "telefono", "TEL", "phone", "telNumber", "NRO_TELEFONO", "TELF1"]),
-            fuzzyString(in: info, matching: ["telefono", "telnumber", "phone", "celular", "telf"]),
+        var phone = firstNonEmpty(
+            stringValue(info, keys: [
+                "PVE_TELEFONO", "TELEFONO", "telefono", "TEL", "phone", "telNumber",
+                "NRO_TELEFONO", "TELF1", "TELF2", "TELFN", "celular", "mobile", "MOB_NUMBER"
+            ]),
+            fuzzyString(in: info, matching: ["telefono", "telnumber", "phone", "celular", "telf", "mobile"]),
             fuzzyString(in: meterExtras, matching: ["telefono", "telnumber", "phone", "celular"])
         ) ?? "—"
+        if phone != "—" {
+            let digits = phone.filter(\.isNumber)
+            if digits.count >= 8 { phone = digits }
+        }
 
         let tariff = firstNonEmpty(
             stringValue(info, keys: [
                 "PVE_TARIFA", "PVE_CATEGORIA", "TARIFA", "CATEGORIA", "categoria", "tarifa",
-                "TIPO_TARIFA", "CAT_TARIFA", "CLASE_TARIFA", "rateCategory"
+                "TIPO_TARIFA", "CAT_TARIFA", "CLASE_TARIFA", "rateCategory", "TARIFTYP",
+                "TARIFART", "KONDIGR", "BAKLASSE", "categoriaTarifaria"
             ]),
-            fuzzyString(in: info, matching: ["tarifa", "categoria", "rate", "clase"]),
-            fuzzyString(in: meterExtras, matching: ["tarifa", "categoria", "rate", "clase"])
+            fuzzyString(in: info, matching: ["tarifa", "categoria", "rate", "clase", "tariftyp", "tarifart"]),
+            fuzzyString(in: meterExtras, matching: ["tarifa", "categoria", "rate", "clase", "tarif"])
         ) ?? "—"
 
+        let holder = firstNonEmpty(
+            stringValue(info, keys: [
+                "PVE_TITULAR", "titular", "PVE_NOMBRE", "NOMBRE", "nombre", "fullName",
+                "holderName", "NAME1", "name1", "RAZON_SOCIAL", "razonSocial"
+            ]),
+            fuzzyString(in: info, matching: ["titular", "razon"]),
+            fuzzyString(in: meterExtras, matching: ["titular"])
+        ) ?? ""
+
         return AccountProfile(
-            holderName: firstNonEmpty(
-                stringValue(info, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE"]),
-                fuzzyString(in: info, matching: ["titular"])
-            ) ?? "",
+            holderName: holder,
             customerNumber: MetrogasURLs.normalizedCustomerNumber(customer) ?? customer,
             supplyAddress: parsedAddress.street ?? address,
             locality: locality,
             postalCode: postal,
-            email: email,
+            email: email.contains("@") ? email : "",
             phone: phone,
             meterNumber: meter,
             tariffCategory: tariff
@@ -511,36 +553,66 @@ enum MetrogasJSONParser {
         return (street, locality, postal)
     }
 
-    /// Parsea respuesta de publicSubscription (email de factura digital).
+    /// Parsea respuesta de publicSubscription / publicAccount (email/teléfono de contacto).
     static func parseSubscription(_ dict: [String: Any]) -> AccountProfile {
         var account = AccountProfile.empty
         if let email = firstNonEmpty(
-            stringValue(dict, keys: ["email", "Email", "digInvEmail", "mail", "MAIL"]),
-            fuzzyString(in: dict, matching: ["email", "mail"])
-        ) {
+            stringValue(dict, keys: ["email", "Email", "digInvEmail", "mail", "MAIL", "PVE_EMAIL", "SMTP_ADDR"]),
+            fuzzyString(in: dict, matching: ["email", "mail", "smtp"])
+        ), email.contains("@") {
             account.email = email
         }
         if let phone = firstNonEmpty(
-            stringValue(dict, keys: ["telNumber", "telefono", "phone", "TELEFONO", "TEL"]),
-            fuzzyString(in: dict, matching: ["telefono", "telnumber", "phone"])
+            stringValue(dict, keys: ["telNumber", "telefono", "phone", "TELEFONO", "TEL", "PVE_TELEFONO", "celular"]),
+            fuzzyString(in: dict, matching: ["telefono", "telnumber", "phone", "celular"])
         ) {
-            account.phone = phone
+            let digits = phone.filter(\.isNumber)
+            account.phone = digits.count >= 8 ? digits : phone
+        }
+        if let name = firstNonEmpty(
+            stringValue(dict, keys: ["PVE_TITULAR", "titular", "nombre", "name", "fullName"]),
+            fuzzyString(in: dict, matching: ["titular"])
+        ) {
+            account.holderName = name
         }
         return account
     }
 
-    /// Escaneo profundo de un JSON M360 por categoría / teléfono / domicilio.
+    /// Escaneo profundo de un JSON M360 por titular / medidor / categoría / teléfono / domicilio.
     static func enrichAccountFromAnyJSON(_ root: Any, into base: AccountProfile) -> AccountProfile {
         var account = base
         guard let dict = root as? [String: Any] else { return account }
+
+        if account.holderName.isEmpty {
+            if let name = firstNonEmpty(
+                stringValue(dict, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE", "NOMBRE", "holderName", "NAME1"]),
+                deepFuzzyString(in: dict, matching: ["titular"], depth: 0)
+            ), name.count >= 3, name.rangeOfCharacter(from: .letters) != nil {
+                account.holderName = name
+            }
+        }
+
+        if account.meterNumber == "—" || account.meterNumber.isEmpty {
+            if let meter = firstNonEmpty(
+                stringValue(dict, keys: ["NRO_MEDIDOR", "nro_medidor", "MEDIDOR", "meterNumber", "GERAET"]),
+                deepFuzzyString(in: dict, matching: ["nro_medidor", "nromedidor", "medidor", "geraet"], depth: 0)
+            ) {
+                account.meterNumber = meter
+            } else if let meters = (dict["meters"] as? [[String: Any]])
+                        ?? ((dict["info"] as? [String: Any])?["meters"] as? [[String: Any]]),
+                      let first = meters.first,
+                      let meter = stringValue(first, keys: ["NRO_MEDIDOR", "nro_medidor", "MEDIDOR"]) {
+                account.meterNumber = meter
+            }
+        }
 
         if account.tariffCategory == "—" || account.tariffCategory.isEmpty {
             if let tariff = firstNonEmpty(
                 stringValue(dict, keys: [
                     "PVE_TARIFA", "PVE_CATEGORIA", "TARIFA", "CATEGORIA", "categoria",
-                    "TIPO_TARIFA", "CAT_TARIFA", "CLASE_TARIFA", "rateCategory", "TARIFTYP"
+                    "TIPO_TARIFA", "CAT_TARIFA", "CLASE_TARIFA", "rateCategory", "TARIFTYP", "TARIFART"
                 ]),
-                deepFuzzyString(in: dict, matching: ["tarifa", "categoria", "tariftyp", "cat_tarif"], depth: 0)
+                deepFuzzyString(in: dict, matching: ["tarifa", "categoria", "tariftyp", "cat_tarif", "tarifart"], depth: 0)
             ) {
                 account.tariffCategory = tariff
             } else if let info = dict["info"] as? [String: Any],
@@ -550,37 +622,61 @@ enum MetrogasJSONParser {
                         ?? ((dict["info"] as? [String: Any])?["meters"] as? [Any]),
                       let hint = deepTariffHint(in: meters) {
                 account.tariffCategory = hint
+            } else if let hint = deepTariffHint(in: dict) {
+                account.tariffCategory = hint
             }
         }
 
         if account.phone == "—" || account.phone.isEmpty {
             if let phone = firstNonEmpty(
-                stringValue(dict, keys: ["PVE_TELEFONO", "TELEFONO", "telefono", "telNumber", "TEL_NUMBER", "TELF1"]),
-                deepFuzzyString(in: dict, matching: ["telefono", "telnumber", "telf1"], depth: 0)
+                stringValue(dict, keys: [
+                    "PVE_TELEFONO", "TELEFONO", "telefono", "telNumber", "TEL_NUMBER", "TELF1", "celular"
+                ]),
+                deepFuzzyString(in: dict, matching: ["telefono", "telnumber", "telf1", "celular"], depth: 0)
             ) {
-                account.phone = phone
+                let digits = phone.filter(\.isNumber)
+                account.phone = digits.count >= 8 ? digits : phone
             }
         }
 
         if account.email.isEmpty {
             if let email = firstNonEmpty(
-                stringValue(dict, keys: ["email", "Email", "digInvEmail", "SMTP_ADDR"]),
-                deepFuzzyString(in: dict, matching: ["email", "smtp"], depth: 0)
+                stringValue(dict, keys: ["email", "Email", "digInvEmail", "SMTP_ADDR", "PVE_EMAIL", "mail"]),
+                deepFuzzyString(in: dict, matching: ["email", "smtp", "diginv"], depth: 0)
             ), email.contains("@") {
                 account.email = email
             }
         }
 
-        if account.locality == "—" || account.postalCode == "—" {
+        if account.supplyAddress == "—" || account.supplyAddress.isEmpty
+            || account.locality == "—" || account.postalCode == "—" {
             let address = firstNonEmpty(
-                stringValue(dict, keys: ["PVE_DIRECCION", "accountAddress", "direccion", "DOMICILIO"]),
-                deepFuzzyString(in: dict, matching: ["direccion", "domicilio", "address"], depth: 0)
+                stringValue(dict, keys: ["PVE_DIRECCION", "accountAddress", "direccion", "DOMICILIO", "PVE_DOMICILIO"]),
+                deepFuzzyString(in: dict, matching: ["direccion", "domicilio", "accountaddress"], depth: 0)
             )
             if let address {
                 let parsed = parseArgentineAddress(address)
-                if account.locality == "—" { account.locality = parsed.locality ?? "—" }
-                if account.postalCode == "—" { account.postalCode = parsed.postalCode ?? "—" }
-                if account.supplyAddress == "—" { account.supplyAddress = parsed.street ?? address }
+                if account.locality == "—" || account.locality.isEmpty {
+                    account.locality = parsed.locality
+                        ?? firstNonEmpty(
+                            stringValue(dict, keys: ["PVE_LOCALIDAD", "LOCALIDAD", "localidad", "PARTIDO"]),
+                            deepFuzzyString(in: dict, matching: ["localidad", "partido"], depth: 0)
+                        )
+                        ?? "—"
+                }
+                if account.postalCode == "—" || account.postalCode.isEmpty {
+                    account.postalCode = parsed.postalCode ?? "—"
+                }
+                if account.supplyAddress == "—" || account.supplyAddress.isEmpty {
+                    account.supplyAddress = parsed.street ?? address
+                }
+            } else if account.locality == "—" || account.locality.isEmpty {
+                if let locality = firstNonEmpty(
+                    stringValue(dict, keys: ["PVE_LOCALIDAD", "LOCALIDAD", "localidad", "PARTIDO", "CITY"]),
+                    deepFuzzyString(in: dict, matching: ["localidad", "partido"], depth: 0)
+                ) {
+                    account.locality = locality
+                }
             }
         }
 

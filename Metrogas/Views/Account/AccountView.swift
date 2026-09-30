@@ -62,19 +62,19 @@ struct AccountView: View {
                 .listRowInsets(sectionRowInsets)
 
                 Section("Suministro") {
-                    labeled("N° de cliente", store.account.customerNumber)
-                    labeled("Medidor", store.account.meterNumber)
-                    labeled("Categoría", store.account.tariffCategory)
-                    labeled("Dirección", store.account.supplyAddress)
-                    labeled("Localidad", store.account.locality)
-                    labeled("CP", store.account.postalCode)
+                    labeled("N° de cliente", display(store.account.customerNumber))
+                    labeled("Medidor", display(store.account.meterNumber))
+                    labeled("Categoría", display(store.account.tariffCategory))
+                    labeled("Dirección", display(store.account.supplyAddress))
+                    labeled("Localidad", display(store.account.locality))
+                    labeled("CP", display(store.account.postalCode))
                 }
                 .listRowBackground(glassListRow)
                 .listRowInsets(sectionRowInsets)
 
                 Section("Contacto") {
                     labeled("Email", displayEmail)
-                    labeled("Teléfono", store.account.phone)
+                    labeled("Teléfono", display(store.account.phone))
                 }
                 .listRowBackground(glassListRow)
                 .listRowInsets(sectionRowInsets)
@@ -197,6 +197,11 @@ struct AccountView: View {
         if !store.account.email.isEmpty { return store.account.email }
         if let email = session.loginEmail, !email.isEmpty { return email }
         return "—"
+    }
+
+    private func display(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "—" : trimmed
     }
 
     private var profileHeader: some View {

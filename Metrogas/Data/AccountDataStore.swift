@@ -258,6 +258,7 @@ final class AccountDataStore: ObservableObject {
             let snapshot = try await MetrogasDataService.shared.fetchByCustomerNumber(number)
             let hasFreshProfile = !snapshot.account.holderName.isEmpty
                 || (!snapshot.account.supplyAddress.isEmpty && snapshot.account.supplyAddress != "—")
+                || (!snapshot.account.meterNumber.isEmpty && snapshot.account.meterNumber != "—")
             let hasFreshInvoices = !snapshot.invoices.isEmpty
 
             if hasFreshProfile || hasFreshInvoices {

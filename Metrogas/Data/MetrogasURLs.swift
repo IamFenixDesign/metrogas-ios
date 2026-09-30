@@ -20,6 +20,7 @@ enum MetrogasURLs {
 
     static let m360InvoiceList = URL(string: "https://saldos.micuenta.metrogas.com.ar/OvServiceHub/api/v1/M360/publicinvoice/listR2")!
     static let m360Billing = URL(string: "https://saldos.micuenta.metrogas.com.ar/OvServiceHub/api/v1/M360/publicbilling/r2")!
+    static let m360PublicAccount = URL(string: "https://saldos.micuenta.metrogas.com.ar/OvServiceHub/api/v1/M360/publicAccount")!
 
     static func m360Consumption(accountId: String) -> URL {
         URL(string: "https://saldos.micuenta.metrogas.com.ar/OvServiceHub/api/v1/M360/publicinvoice/consumption/\(accountId)")!

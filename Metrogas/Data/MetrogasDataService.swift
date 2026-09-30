@@ -22,12 +22,22 @@ actor MetrogasDataService {
         let snapshot = try await PortalDataBridge.shared.sync(
             accountId: id,
             loginHint: nil,
-            timeoutSeconds: 32
+            timeoutSeconds: 40
         )
 
         var account = AccountProfile.empty
         account = MetrogasJSONParser.mergeAccount(account, snapshot.account)
         account.customerNumber = id
+        // Completar localidad/CP desde la dirección si billing no los mandó sueltos.
+        if (account.locality == "—" || account.locality.isEmpty),
+           account.supplyAddress != "—", !account.supplyAddress.isEmpty {
+            let enriched = MetrogasJSONParser.enrichAccountFromAnyJSON(
+                ["PVE_DIRECCION": account.supplyAddress],
+                into: account
+            )
+            account = MetrogasJSONParser.mergeAccount(account, enriched)
+            account.customerNumber = id
+        }
 
         var invoices = snapshot.invoices
         var readings = snapshot.readings

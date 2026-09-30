@@ -649,28 +649,39 @@ final class PortalDataBridge: NSObject {
               finished = true;
               postNative('syncDone', { accountId: ACCOUNT });
             }
-            // listR2 + billing + subscription (email de factura digital = ownership Google).
-            postJSON('/OvServiceHub/api/v1/M360/publicinvoice/listR2', {
-              accountId: ACCOUNT
-            }, function(status2, body2) {
-              postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/listR2', method: 'POST', status: status2, body: body2 });
-              postJSON('/OvServiceHub/api/v1/M360/publicbilling/r2', {
+            // Billing (titular/dirección/medidor) → publicAccount (contacto/perfil) →
+            // facturas → factura digital (email) → consumo.
+            postJSON('/OvServiceHub/api/v1/M360/publicbilling/r2', {
+              accountId: ACCOUNT, relation: 'FD'
+            }, function(status, body) {
+              postNative('net', { url: '/OvServiceHub/api/v1/M360/publicbilling/r2', method: 'POST', status: status, body: body });
+              postJSON('/OvServiceHub/api/v1/M360/publicAccount', {
                 accountId: ACCOUNT, relation: 'FD'
-              }, function(status, body) {
-                postNative('net', { url: '/OvServiceHub/api/v1/M360/publicbilling/r2', method: 'POST', status: status, body: body });
-                getJSON('/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, function(status4, body4) {
-                  postNative('net', { url: '/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, method: 'GET', status: status4, body: body4 });
-                  getJSON('/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, function(status5, body5) {
-                    postNative('net', { url: '/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, method: 'GET', status: status5, body: body5 });
-                    finishSync();
-                    postJSON('/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, {}, function(status3, body3) {
-                      postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, method: 'POST', status: status3, body: body3 });
+              }, function(statusA, bodyA) {
+                postNative('net', { url: '/OvServiceHub/api/v1/M360/publicAccount', method: 'POST', status: statusA, body: bodyA });
+                postJSON('/OvServiceHub/api/v1/publicAccount', {
+                  accountId: ACCOUNT, relation: 'FD'
+                }, function(statusB, bodyB) {
+                  postNative('net', { url: '/OvServiceHub/api/v1/publicAccount', method: 'POST', status: statusB, body: bodyB });
+                  postJSON('/OvServiceHub/api/v1/M360/publicinvoice/listR2', {
+                    accountId: ACCOUNT
+                  }, function(status2, body2) {
+                    postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/listR2', method: 'POST', status: status2, body: body2 });
+                    getJSON('/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, function(status4, body4) {
+                      postNative('net', { url: '/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, method: 'GET', status: status4, body: body4 });
+                      getJSON('/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, function(status5, body5) {
+                        postNative('net', { url: '/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, method: 'GET', status: status5, body: body5 });
+                        postJSON('/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, {}, function(status3, body3) {
+                          postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, method: 'POST', status: status3, body: body3 });
+                          finishSync();
+                        });
+                      });
                     });
                   });
                 });
               });
             });
-            setTimeout(finishSync, 16000);
+            setTimeout(finishSync, 22000);
           }
 
           ensureRecaptcha(function() { setTimeout(run, 400); });
@@ -765,20 +776,33 @@ extension PortalDataBridge: WKScriptMessageHandler {
 
     private func maybeFinishSaldosEarly(url: String) {
         guard mode == .saldos, continuation != nil else { return }
-        let isList = url.localizedCaseInsensitiveContains("listR2")
-        let isBilling = url.localizedCaseInsensitiveContains("publicbilling")
-        guard isList || isBilling else { return }
+        let lower = url.lowercased()
+        let isProfileEndpoint = lower.contains("publicbilling")
+            || lower.contains("publicaccount")
+            || lower.contains("publicsubscription")
+        guard isProfileEndpoint || lower.contains("listr2") else { return }
 
         Task { @MainActor in
-            // Esperar billing para titular/dirección; no cerrar solo con facturas.
-            if isList, !captured.contains(where: { $0.url.localizedCaseInsensitiveContains("publicbilling") }) {
-                return
-            }
+            // No cerrar hasta tener billing + intento de contacto (account/subscription).
+            let urls = captured.map { $0.url.lowercased() }
+            guard urls.contains(where: { $0.contains("publicbilling") }) else { return }
+            let triedContact = urls.contains(where: {
+                $0.contains("publicaccount") || $0.contains("publicsubscription")
+            })
+            guard triedContact else { return }
+
             let early = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
-            let hasInvoices = !early.invoices.isEmpty
-            let hasProfile = !early.account.holderName.isEmpty
-                || (!early.account.supplyAddress.isEmpty && early.account.supplyAddress != "—")
-            if hasInvoices && (hasProfile || isBilling) {
+            let profile = early.account
+            let hasCoreProfile = !profile.holderName.isEmpty
+                || (!profile.supplyAddress.isEmpty && profile.supplyAddress != "—")
+                || (!profile.meterNumber.isEmpty && profile.meterNumber != "—")
+            // Perfil “completo” para Cuenta: titular + domicilio + (email o teléfono si vino).
+            let hasContact = !profile.email.isEmpty
+                || (!profile.phone.isEmpty && profile.phone != "—")
+            let contactAttemptDone = urls.contains(where: { $0.contains("publicsubscription") })
+                && urls.contains(where: { $0.contains("publicaccount") })
+
+            if hasCoreProfile && (hasContact || contactAttemptDone) {
                 await completeIfNeeded()
             }
         }
