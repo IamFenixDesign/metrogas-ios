@@ -20,6 +20,9 @@ final class PortalDataBridge: NSObject {
     private var didTriggerAPISync = false
     private var mode: SyncMode = .discover
     private var pageQueue: [URL] = []
+    private var capturedListR2 = false
+    private var capturedBilling = false
+    private var capturedConsumption = false
 
     private enum SyncMode {
         case discover
@@ -40,14 +43,14 @@ final class PortalDataBridge: NSObject {
             account.holderName = local.replacingOccurrences(of: ".", with: " ").capitalized
         }
 
-        // Camino rápido: la cuenta de login ya tiene N° de cliente vinculado.
+        // Camino rápido: N° vinculado → solo M360 (sin discovery de portal).
         if let linkedId = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "") {
             let saldos = try await runCapture(
                 mode: .saldos,
                 accountId: linkedId,
                 loginHint: loginHint,
                 startURLs: [MetrogasURLs.saldosGo(accountId: linkedId)],
-                timeoutSeconds: max(24, timeoutSeconds * 0.7)
+                timeoutSeconds: min(18, timeoutSeconds)
             )
             account = MetrogasJSONParser.mergeAccount(account, saldos.account)
             account.customerNumber = linkedId
@@ -55,21 +58,6 @@ final class PortalDataBridge: NSObject {
             var readings = saldos.readings
             if readings.isEmpty && !invoices.isEmpty {
                 readings = MetrogasJSONParser.deriveReadings(from: invoices)
-            }
-            // Enriquecer perfil desde portal si faltan datos del titular.
-            if account.holderName.isEmpty || account.supplyAddress == "—" || account.supplyAddress.isEmpty {
-                if let enriched = try? await runCapture(
-                    mode: .discover,
-                    accountId: "",
-                    loginHint: loginHint,
-                    startURLs: [MetrogasURLs.portalOV2, MetrogasURLs.portalMobile],
-                    timeoutSeconds: min(12, timeoutSeconds * 0.3)
-                ) {
-                    account = MetrogasJSONParser.mergeAccount(account, enriched.account)
-                    account.customerNumber = linkedId
-                    invoices = mergeInvoices(invoices, enriched.invoices)
-                    readings = mergeReadings(readings, enriched.readings)
-                }
             }
             return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
         }
@@ -166,6 +154,9 @@ final class PortalDataBridge: NSObject {
         self.accountId = accountId
         self.loginHint = loginHint
         self.didTriggerAPISync = false
+        self.capturedListR2 = false
+        self.capturedBilling = false
+        self.capturedConsumption = false
         self.pageQueue = Array(startURLs.dropFirst())
         captured.removeAll()
         domText = ""
@@ -573,14 +564,15 @@ final class PortalDataBridge: NSObject {
 
           function run() {
             postNative('syncStart', { accountId: ACCOUNT });
-            postJSON('/OvServiceHub/api/v1/M360/publicbilling/r2', {
-              accountId: ACCOUNT, relation: 'FD'
-            }, function(status, body) {
-              postNative('net', { url: '/OvServiceHub/api/v1/M360/publicbilling/r2', method: 'POST', status: status, body: body });
-              postJSON('/OvServiceHub/api/v1/M360/publicinvoice/listR2', {
-                accountId: ACCOUNT
-              }, function(status2, body2) {
-                postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/listR2', method: 'POST', status: status2, body: body2 });
+            // Primero listR2: trae historial completo (pagadas + pendientes).
+            postJSON('/OvServiceHub/api/v1/M360/publicinvoice/listR2', {
+              accountId: ACCOUNT
+            }, function(status2, body2) {
+              postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/listR2', method: 'POST', status: status2, body: body2 });
+              postJSON('/OvServiceHub/api/v1/M360/publicbilling/r2', {
+                accountId: ACCOUNT, relation: 'FD'
+              }, function(status, body) {
+                postNative('net', { url: '/OvServiceHub/api/v1/M360/publicbilling/r2', method: 'POST', status: status, body: body });
                 postJSON('/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, {}, function(status3, body3) {
                   postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, method: 'POST', status: status3, body: body3 });
                   postNative('syncDone', { accountId: ACCOUNT });
@@ -589,7 +581,7 @@ final class PortalDataBridge: NSObject {
             });
           }
 
-          ensureRecaptcha(function() { setTimeout(run, 2200); });
+          ensureRecaptcha(function() { setTimeout(run, 900); });
         })();
         """
     }
@@ -614,9 +606,14 @@ extension PortalDataBridge: WKScriptMessageHandler {
                 || url.localizedCaseInsensitiveContains("account")
                 || url.localizedCaseInsensitiveContains("customer")
                 || url.localizedCaseInsensitiveContains("invoice")
+                || url.localizedCaseInsensitiveContains("linked-account")
                 || trimmed.hasPrefix("{")
                 || trimmed.hasPrefix("[") {
                 captured.append((url, body))
+                let lower = url.lowercased()
+                if lower.contains("listr2") { capturedListR2 = true }
+                if lower.contains("publicbilling") { capturedBilling = true }
+                if lower.contains("consumption") { capturedConsumption = true }
             }
         } else if type == "dom", let payload = dict["payload"] as? [String: Any] {
             if let text = payload["text"] as? String, text.count > domText.count {
@@ -625,14 +622,14 @@ extension PortalDataBridge: WKScriptMessageHandler {
         } else if type == "ready" {
             if mode == .discover {
                 Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 2_500_000_000)
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
                     triggerPortalDiscoveryProbe()
-                    try? await Task.sleep(nanoseconds: 3_500_000_000)
+                    try? await Task.sleep(nanoseconds: 2_500_000_000)
                     loadNextPageIfNeeded()
                 }
             } else {
                 Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    try? await Task.sleep(nanoseconds: 1_200_000_000)
                     triggerSaldosAPISyncIfNeeded()
                 }
             }
@@ -656,11 +653,10 @@ extension PortalDataBridge: WKScriptMessageHandler {
             Task { await completeIfNeeded() }
         }
 
-        if mode == .saldos {
-            let early = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
-            if !early.invoices.isEmpty && !early.readings.isEmpty {
-                Task { await completeIfNeeded() }
-            }
+        // Completar cuando ya tenemos historial (listR2 = pagadas+pendientes)
+        // y al menos billing o consumption; no cortar solo con deudas.
+        if mode == .saldos, capturedListR2, (capturedBilling || capturedConsumption) {
+            Task { await completeIfNeeded() }
         }
     }
 }
@@ -670,12 +666,12 @@ extension PortalDataBridge: WKNavigationDelegate {
         webView.evaluateJavaScript(Self.hookScript, completionHandler: nil)
         if mode == .saldos {
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                try? await Task.sleep(nanoseconds: 1_400_000_000)
                 triggerSaldosAPISyncIfNeeded()
             }
         } else {
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
                 triggerPortalDiscoveryProbe()
             }
         }

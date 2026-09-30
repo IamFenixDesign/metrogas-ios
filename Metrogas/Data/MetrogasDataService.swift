@@ -6,8 +6,7 @@ struct MetrogasDataSnapshot: Sendable {
     var readings: [ConsumptionReading]
 }
 
-/// Sincroniza automáticamente con la sesión de Oficina Virtual
-/// (login MetroGAS o Google): descubre el N° de cliente y carga M360.
+/// Sincroniza con Oficina Virtual (Google o MetroGAS) vía M360 saldos.
 actor MetrogasDataService {
     static let shared = MetrogasDataService()
 
@@ -18,23 +17,25 @@ actor MetrogasDataService {
         config.httpCookieStorage = HTTPCookieStorage.shared
         config.httpCookieAcceptPolicy = .always
         config.httpShouldSetCookies = true
-        config.timeoutIntervalForRequest = 35
+        config.timeoutIntervalForRequest = 25
         session = URLSession(configuration: config)
     }
 
     func fetchAccountData(loginHint: String?, preferredAccountId: String?) async throws -> MetrogasDataSnapshot {
         var account = seedAccount(loginHint: loginHint, customerNumber: preferredAccountId)
 
-        // Renueva cookies SAML/portal de la cuenta ya autenticada.
-        _ = try? await establishSiteSession(MetrogasURLs.portalOV2)
-        _ = try? await establishSiteSession(MetrogasURLs.accesoOV2)
-        _ = try? await establishSiteSession(MetrogasURLs.portalMobile)
-        _ = try? await establishSiteSession(MetrogasURLs.acceso)
+        let hasLinkedId = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "") != nil
+
+        // Con N° ya vinculado no calentamos portal (ahorra varios segundos).
+        if !hasLinkedId {
+            _ = try? await establishSiteSession(MetrogasURLs.portalOV2)
+            _ = try? await establishSiteSession(MetrogasURLs.acceso)
+        }
 
         let snapshot = try await PortalDataBridge.shared.syncFromSession(
             loginHint: loginHint,
             preferredAccountId: preferredAccountId,
-            timeoutSeconds: 36
+            timeoutSeconds: hasLinkedId ? 18 : 28
         )
 
         account = MetrogasJSONParser.mergeAccount(account, snapshot.account)
@@ -70,7 +71,7 @@ actor MetrogasDataService {
     @discardableResult
     private func establishSiteSession(_ start: URL) async throws -> String {
         var html = try await loadHTML(start)
-        for _ in 0..<4 {
+        for _ in 0..<3 {
             if looksAuthenticatedShell(html) { return html }
             if html.contains("j_username") || html.contains("j_password") { return html }
             if html.lowercased().contains("sap-ui") { return html }

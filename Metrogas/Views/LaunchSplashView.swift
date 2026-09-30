@@ -72,13 +72,13 @@ struct RootContainerView: View {
             }
         }
         .onChange(of: session.isAuthenticated) { wasLoggedIn, loggedIn in
-            // Solo sync extra al pasar de login → autenticado (no en cold start).
+            // Solo sync al pasar de login → autenticado (una vez por sesión).
             guard loggedIn, !wasLoggedIn, didRunInitialBootstrap else {
                 if !loggedIn { store.clear() }
                 return
             }
             Task {
-                await store.refresh(loginHint: session.loginEmail)
+                await store.refresh(loginHint: session.loginEmail, force: true)
                 await reminders.reschedule(for: store.invoices)
             }
         }
@@ -102,12 +102,8 @@ struct RootContainerView: View {
                    let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
                     session.loginEmail = email
                 }
-                await store.refresh(loginHint: session.loginEmail)
-                // Reintento silencioso si la primera pasada no trajo facturas.
-                if store.invoices.isEmpty && !store.needsReauthentication {
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    await store.refresh(loginHint: session.loginEmail)
-                }
+                // Una sola sync por sesión; si ya hay caché, no vuelve a pegarle a la red.
+                await store.refresh(loginHint: session.loginEmail, force: false)
                 await reminders.reschedule(for: store.invoices)
             }
         }

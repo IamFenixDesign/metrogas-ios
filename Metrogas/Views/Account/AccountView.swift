@@ -39,7 +39,7 @@ struct AccountView: View {
                             Button("Vincular a esta cuenta") {
                                 if store.saveCustomerNumber(store.customerNumberDraft, forEmail: session.loginEmail) {
                                     customerNumberError = nil
-                                    Task { await store.refresh(loginHint: session.loginEmail) }
+                                    Task { await store.refresh(loginHint: session.loginEmail, force: true) }
                                 } else {
                                     customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
                                 }
@@ -122,7 +122,7 @@ struct AccountView: View {
                 }
                 .scrollContentBackground(.hidden)
                 .refreshable {
-                    await store.refresh(loginHint: session.loginEmail)
+                    await store.refresh(loginHint: session.loginEmail, force: true)
                 }
             }
             .navigationTitle("Cuenta")

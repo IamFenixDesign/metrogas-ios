@@ -37,43 +37,26 @@ struct HomeView: View {
                     .padding(.bottom, 28)
                 }
                 .refreshable {
-                    await store.refresh(loginHint: session.loginEmail)
+                    await store.refresh(loginHint: session.loginEmail, force: true)
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Image("MetrogasLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(height: 22)
-                        .accessibilityHidden(true)
-                }
-            }
-            .task {
-                // Si no hay datos aún, sincroniza sola con la sesión activa.
-                if store.invoices.isEmpty && !store.isLoading {
-                    await store.refresh(loginHint: session.loginEmail)
-                }
-            }
+            .navigationTitle("Inicio")
+            .navigationBarTitleDisplayMode(.large)
         }
     }
 
     private var brandHero: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            MetrogasLogo(height: 44, alignment: .leading)
-                .frame(maxWidth: 200, alignment: .leading)
-                .padding(.top, 4)
-
+        VStack(alignment: .leading, spacing: 8) {
             Text("Tu gas natural en un vistazo")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
 
             let first = store.account.holderName.components(separatedBy: " ").first
             Text(first?.isEmpty == false ? "Hola, \(first!)" : "Hola")
-                .font(.title3.weight(.semibold))
+                .font(.title2.weight(.semibold))
                 .foregroundStyle(.primary)
         }
+        .padding(.top, 4)
         .accessibilityElement(children: .combine)
     }
 
@@ -129,11 +112,11 @@ struct HomeView: View {
             .buttonStyle(.plain)
         } else if !store.isLoading {
             VStack(alignment: .leading, spacing: 8) {
-                Text(store.invoices.isEmpty ? "Sincronizando tu cuenta" : "Estás al día")
+                Text(store.invoices.isEmpty ? "Sin facturas todavía" : "Estás al día")
                     .font(.headline)
                 Text(
                     store.invoices.isEmpty
-                        ? "Estamos cargando facturas y saldo de tu Oficina Virtual."
+                        ? "Cuando haya datos de tu Oficina Virtual, vas a ver el próximo vencimiento acá."
                         : "No hay facturas pendientes en este momento."
                 )
                 .font(.subheadline)

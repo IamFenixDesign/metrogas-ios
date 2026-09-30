@@ -48,27 +48,28 @@ enum MetrogasJSONParser {
     /// Parsea las formas reales de OvServiceHub M360.
     static func parseM360Envelope(_ dict: [String: Any]) -> MetrogasDataSnapshot {
         var account = AccountProfile.empty
-        var invoices: [Invoice] = []
+        var history: [Invoice] = []
+        var debts: [Invoice] = []
         var readings: [ConsumptionReading] = []
 
-        // publicinvoice/listR2 → { ISU: [...], IPOST: [...] }
+        // publicinvoice/listR2 → historial completo (pagadas + pendientes).
         if let isu = dict["ISU"] as? [[String: Any]] {
-            invoices.append(contentsOf: isu.compactMap { parseM360Invoice($0) })
+            history.append(contentsOf: isu.compactMap { parseM360Invoice($0, source: .history) })
         }
         if let ipost = dict["IPOST"] as? [[String: Any]] {
             for row in ipost {
-                if let inv = parseM360IPost(row) { invoices.append(inv) }
+                if let inv = parseM360IPost(row) { history.append(inv) }
             }
         }
 
-        // publicbilling/r2 → info + deudas + status
+        // publicbilling/r2 → info + deudas (solo adeudadas).
         if let info = dict["info"] as? [String: Any] {
             account = mergeAccount(account, parseM360Info(info))
         }
         if let deudas = dict["deudas"] as? [String: Any],
            let items = deudas["items"] as? [[String: Any]] {
             for item in items {
-                if let inv = parseM360DebtItem(item) { invoices.append(inv) }
+                if let inv = parseM360DebtItem(item) { debts.append(inv) }
             }
         }
 
@@ -77,11 +78,20 @@ enum MetrogasJSONParser {
             readings = consumos.compactMap { parseM360Consumption($0) }
         }
 
-        // Dedup invoices by id
+        // Base = historial (incluye pagadas); las deudas solo actualizan pendientes.
         var map: [String: Invoice] = [:]
-        for inv in invoices { map[inv.id] = inv }
-        invoices = Array(map.values).sorted { $0.dueDate > $1.dueDate }
+        for inv in history { map[inv.id] = inv }
+        for debt in debts {
+            if var existing = map[debt.id] {
+                existing.status = debt.status
+                existing.amountARS = debt.amountARS
+                map[debt.id] = existing
+            } else {
+                map[debt.id] = debt
+            }
+        }
 
+        let invoices = Array(map.values).sorted { $0.dueDate > $1.dueDate }
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
     }
 
@@ -198,26 +208,54 @@ enum MetrogasJSONParser {
 
     // MARK: - M360 field mappers
 
-    private static func parseM360Invoice(_ dict: [String: Any]) -> Invoice? {
-        let number = stringValue(dict, keys: ["NUMERO_FACTURA", "NRO_FACTURA", "nro_factura"]) 
-        let amount = decimalValue(dict, keys: ["MONTO_TOTAL", "IMPORTE_PENDIENTE", "TOTALAPAGAR", "importe"])
+    private enum InvoiceSource {
+        case history
+        case debt
+    }
+
+    private static func parseM360Invoice(_ dict: [String: Any], source: InvoiceSource = .history) -> Invoice? {
+        let number = stringValue(dict, keys: ["NUMERO_FACTURA", "NRO_FACTURA", "nro_factura", "codigo"])
+        let total = decimalValue(dict, keys: ["MONTO_TOTAL", "TOTALAPAGAR", "importe", "IMPORTE"])
+        let pending = decimalValue(dict, keys: ["IMPORTE_PENDIENTE", "importe"])
+        let amount = total ?? pending
         let due = dateValue(dict, keys: ["FECHA_VENCIMIENTO", "vencimiento", "FECHA_VTO"])
         let issued = dateValue(dict, keys: ["FECHA_FACTURA", "FECHA_EMISION"]) ?? due
+        let paidAt = dateValue(dict, keys: ["FECHA_PAGO", "fecha_pago", "FECHA_PAGADO"])
         let start = dateValue(dict, keys: ["FECHA_LEC_ANTERIOR"]) ?? issued ?? Date()
         let end = dateValue(dict, keys: ["FECHA_LEC_ACTUAL"]) ?? start
         let m3 = doubleValue(dict, keys: ["CONSUMO", "M3", "CONSUMO_PERIODO"]) ?? 0
         let statusRaw = (stringValue(dict, keys: ["ESTADO", "estado"]) ?? "").lowercased()
-        let pending = decimalValue(dict, keys: ["IMPORTE_PENDIENTE"])
 
         guard let amount else { return nil }
         let dueDate = due ?? issued ?? Date()
         let id = number ?? "F-\(Int(dueDate.timeIntervalSince1970))"
 
         let status: InvoiceStatus
-        if let pending, pending <= 0 { status = .paid }
-        else if statusRaw.contains("pag") || statusRaw.contains("saldad") { status = .paid }
-        else if dueDate < Calendar.current.startOfDay(for: Date()) { status = .overdue }
-        else { status = .pending }
+        if source == .debt {
+            status = dueDate < Calendar.current.startOfDay(for: Date()) ? .overdue : .pending
+        } else if paidAt != nil {
+            status = .paid
+        } else if let pending, pending <= 0 {
+            status = .paid
+        } else if statusRaw.contains("pag") || statusRaw.contains("saldad") || statusRaw.contains("cancel") {
+            status = .paid
+        } else if let pending, pending > 0 {
+            status = dueDate < Calendar.current.startOfDay(for: Date()) ? .overdue : .pending
+        } else if statusRaw.contains("venc") || statusRaw.contains("deud") {
+            status = .overdue
+        } else if statusRaw.contains("pend") {
+            status = .pending
+        } else {
+            // Historial sin deuda explícita → pagada (como en la web de saldos).
+            status = .paid
+        }
+
+        let displayAmount: Decimal
+        if status == .paid {
+            displayAmount = total ?? amount
+        } else {
+            displayAmount = pending ?? amount
+        }
 
         return Invoice(
             id: id,
@@ -226,12 +264,12 @@ enum MetrogasJSONParser {
             periodEnd: end,
             dueDate: dueDate,
             issuedDate: issued ?? dueDate,
-            amountARS: pending ?? amount,
+            amountARS: displayAmount,
             status: status,
             consumptionM3: m3,
             supplyPoint: "MetroGAS",
             notes: "",
-            breakdown: InvoiceBreakdown(cargoFijo: 0, cargoVariable: amount, impuestos: 0, otros: 0)
+            breakdown: InvoiceBreakdown(cargoFijo: 0, cargoVariable: total ?? amount, impuestos: 0, otros: 0)
         )
     }
 
@@ -252,7 +290,7 @@ enum MetrogasJSONParser {
         }
         mapped["MONTO_TOTAL"] = dict["TOTALAPAGAR"] ?? dict["MONTO_TOTAL"]
         mapped["CONSUMO"] = dict["M3"] ?? dict["CONSUMO"]
-        return parseM360Invoice(mapped)
+        return parseM360Invoice(mapped, source: .history)
     }
 
     private static func parseM360DebtItem(_ dict: [String: Any]) -> Invoice? {
@@ -269,7 +307,7 @@ enum MetrogasJSONParser {
         mapped["FECHA_VENCIMIENTO"] = dict["vencimiento"] ?? dict["FECHA_VENCIMIENTO"]
         mapped["IMPORTE_PENDIENTE"] = dict["importe"]
         mapped["ESTADO"] = "Pendiente"
-        return parseM360Invoice(mapped)
+        return parseM360Invoice(mapped, source: .debt)
     }
 
     private static func parseM360Info(_ info: [String: Any]) -> AccountProfile {

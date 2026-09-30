@@ -18,6 +18,8 @@ final class AccountDataStore: ObservableObject {
     /// Solo como respaldo si la OV no devolvió N° de cliente.
     @Published var needsCustomerNumber = false
     @Published var customerNumberDraft: String = ""
+    /// Evita re-sync al cambiar de tab o reabrir pantallas en la misma sesión.
+    private var didSyncThisSession = false
 
     private enum Keys {
         static let cache = "metrogas.account.cache.v1"
@@ -152,9 +154,18 @@ final class AccountDataStore: ObservableObject {
         persistCache()
     }
 
-    /// Sync automática con la sesión activa (sin botón).
-    func refresh(loginHint: String? = nil) async {
+    /// Sync con la sesión activa.
+    /// - `force: false` (default): una sola vez por sesión si ya hay caché.
+    /// - `force: true`: pull-to-refresh / login fresco.
+    func refresh(loginHint: String? = nil, force: Bool = false) async {
         guard !isLoading else { return }
+
+        // No re-sincronizar al cambiar de tab ni cada vez que abre la app
+        // si esta sesión ya sincronizó y hay datos en caché.
+        if !force, didSyncThisSession, (!invoices.isEmpty || lastSync != nil) {
+            return
+        }
+
         isLoading = true
         syncMessage = nil
         needsCustomerNumber = false
@@ -212,23 +223,31 @@ final class AccountDataStore: ObservableObject {
             }
 
             account = nextAccount
-            invoices = snapshot.invoices
-            readings = snapshot.readings
+            // Conservar caché previa si la red devolvió vacío (evita borrar pagadas).
+            if !snapshot.invoices.isEmpty {
+                invoices = snapshot.invoices
+            } else if invoices.isEmpty {
+                invoices = snapshot.invoices
+            }
+            if !snapshot.readings.isEmpty || readings.isEmpty {
+                readings = snapshot.readings
+            }
             lastSync = Date()
+            didSyncThisSession = true
             UserDefaults.standard.set(lastSync, forKey: Keys.lastSync)
             persistCache()
 
             if MetrogasURLs.normalizedCustomerNumber(account.customerNumber) == nil
-                && snapshot.invoices.isEmpty {
+                && invoices.isEmpty {
                 needsCustomerNumber = true
                 syncMessage = "Tu usuario no tiene un N° de cliente asociado todavía. Si lo sabés, cargalo en Cuenta una vez y queda vinculado."
-            } else if snapshot.invoices.isEmpty && snapshot.readings.isEmpty {
-                syncMessage = "Sesión activa. Todavía no llegaron facturas/consumo; en unos segundos se reintenta solo."
+            } else if invoices.isEmpty && readings.isEmpty {
+                syncMessage = "No encontramos facturas todavía. Deslizá hacia abajo para reintentar."
             } else {
                 syncMessage = nil
             }
         } catch {
-            syncMessage = "No pudimos sincronizar con MetroGAS. Revisá tu conexión; vamos a reintentar."
+            syncMessage = "No pudimos sincronizar con MetroGAS. Deslizá hacia abajo para reintentar."
         }
     }
 
@@ -250,6 +269,7 @@ final class AccountDataStore: ObservableObject {
         lastSync = nil
         syncMessage = nil
         needsReauthentication = false
+        didSyncThisSession = false
         UserDefaults.standard.removeObject(forKey: Keys.cache)
         UserDefaults.standard.removeObject(forKey: Keys.lastSync)
     }
