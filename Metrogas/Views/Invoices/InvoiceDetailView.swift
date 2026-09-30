@@ -23,7 +23,6 @@ struct InvoiceDetailView: View {
         }
         .navigationTitle("Detalle")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
         .onAppear {
             draftNotes = invoice?.notes ?? ""
             withAnimation(MetrogasTheme.springSoft) { appear = true }

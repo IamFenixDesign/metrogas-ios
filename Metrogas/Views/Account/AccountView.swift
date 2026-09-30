@@ -149,8 +149,6 @@ struct AccountView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Cuenta")
             .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .task {
                 await reminders.refreshAuthorizationStatus()
             }

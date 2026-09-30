@@ -36,8 +36,6 @@ struct InvoiceListView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Facturas")
             .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .searchable(text: $store.searchText, prompt: "Buscar N° o período")
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }

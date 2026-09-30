@@ -51,8 +51,6 @@ struct HomeView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Inicio")
             .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }
             }
