@@ -124,9 +124,10 @@ struct LatestInvoiceWidget: Widget {
         StaticConfiguration(kind: kind, provider: LatestInvoiceProvider()) { entry in
             LatestInvoiceWidgetView(entry: entry)
         }
-        .configurationDisplayName("Factura más nueva")
+        .configurationDisplayName("MetroGAS — Última factura")
         .description("Muestra la última factura emitida de tu cuenta MetroGAS.")
         .supportedFamilies([.systemSmall, .systemMedium])
+        .contentMarginsDisabled()
     }
 }
 

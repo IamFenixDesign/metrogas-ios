@@ -1,9 +1,13 @@
 import Foundation
 
-/// Snapshot compartido con widgets vía App Group.
+/// Snapshot compartido con widgets.
+/// Usa App Group si el dispositivo lo permite; si no, escribe también en un
+/// archivo del contenedor del grupo (nil sin entitlement) y en UserDefaults
+/// estándar como respaldo local.
 enum WidgetSnapshotStore {
     static let appGroupID = "group.ar.com.metrogas.demo"
     private static let key = "widget.invoices.v1"
+    private static let fileName = "widget-invoices-v1.json"
 
     struct Item: Codable, Identifiable, Hashable {
         let id: String
@@ -24,23 +28,54 @@ enum WidgetSnapshotStore {
         }
     }
 
-    private static var defaults: UserDefaults {
+    private static var suiteDefaults: UserDefaults {
         UserDefaults(suiteName: appGroupID) ?? .standard
+    }
+
+    private static var sharedFileURL: URL? {
+        FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
+            .appendingPathComponent(fileName)
     }
 
     static func save(_ snapshot: Snapshot) {
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        defaults.set(data, forKey: key)
-        defaults.synchronize()
+
+        // App Group suite (compartido cuando hay entitlement + provisioning).
+        suiteDefaults.set(data, forKey: key)
+        suiteDefaults.synchronize()
+
+        // Respaldo en UserDefaults de la app (útil si el grupo no está activo).
+        UserDefaults.standard.set(data, forKey: key)
+
+        if let url = sharedFileURL {
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     static func load() -> Snapshot? {
-        guard let data = defaults.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(Snapshot.self, from: data)
+        if let data = suiteDefaults.data(forKey: key),
+           let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
+            return snapshot
+        }
+        if let url = sharedFileURL,
+           let data = try? Data(contentsOf: url),
+           let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
+            return snapshot
+        }
+        if let data = UserDefaults.standard.data(forKey: key),
+           let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
+            return snapshot
+        }
+        return nil
     }
 
     static func clear() {
-        defaults.removeObject(forKey: key)
-        defaults.synchronize()
+        suiteDefaults.removeObject(forKey: key)
+        suiteDefaults.synchronize()
+        UserDefaults.standard.removeObject(forKey: key)
+        if let url = sharedFileURL {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }

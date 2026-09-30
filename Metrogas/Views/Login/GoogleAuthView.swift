@@ -89,7 +89,7 @@ struct GoogleAuthSheet: View {
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
             }
-            .navigationTitle("Continuar con Google")
+            .navigationTitle(session.canContinueWithGoogle ? "Continuar" : "Continuar con Google")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

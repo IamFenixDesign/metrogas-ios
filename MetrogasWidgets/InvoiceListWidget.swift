@@ -128,9 +128,10 @@ struct InvoiceListWidget: Widget {
         StaticConfiguration(kind: kind, provider: InvoiceListProvider()) { entry in
             InvoiceListWidgetView(entry: entry)
         }
-        .configurationDisplayName("Lista de facturas")
+        .configurationDisplayName("MetroGAS — Facturas")
         .description("Listado compacto de tus últimas facturas MetroGAS.")
         .supportedFamilies([.systemMedium, .systemLarge])
+        .contentMarginsDisabled()
     }
 }
 

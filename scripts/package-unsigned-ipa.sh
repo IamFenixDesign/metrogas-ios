@@ -64,4 +64,9 @@ if [[ "$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")" != "$(cd "$BUILD_DIR
 fi
 
 echo "==> IPA ready: $OUT ($(du -h "$OUT" | awk '{print $1}'))"
-unzip -l "$OUT" | head -20
+unzip -l "$OUT" | head -40
+if ! unzip -l "$OUT" | grep -q 'PlugIns/MetrogasWidgets.appex/MetrogasWidgets'; then
+  echo "ERROR: MetrogasWidgets.appex missing from IPA" >&2
+  exit 1
+fi
+echo "==> Widget extension embedded OK"

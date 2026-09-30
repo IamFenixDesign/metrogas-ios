@@ -16,6 +16,12 @@
 #   Base64 of the .mobileprovision matching bundle id ar.com.metrogas.demo
 #   openssl base64 -A -in profile.mobileprovision
 #
+# For widgets to appear and show live data, also create:
+#   - App ID ar.com.metrogas.demo.widgets (WidgetKit extension)
+#   - App Group group.ar.com.metrogas.demo on BOTH app IDs
+#   - Provisioning profiles that include that App Group
+# When resigning an unsigned IPA, resign Payload/Metrogas.app/PlugIns/MetrogasWidgets.appex too.
+#
 # APPLE_TEAM_ID
 #   10-character Apple Developer Team ID.
 #
