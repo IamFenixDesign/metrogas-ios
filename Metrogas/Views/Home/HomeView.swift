@@ -9,6 +9,8 @@ struct HomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    TabBarScrollProbe()
+
                     brandHero
                         .appearMotion(visible: appear, index: 0)
 

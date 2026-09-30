@@ -10,6 +10,8 @@ struct ConsumptionView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    TabBarScrollProbe()
+
                     periodPicker
                         .appearMotion(visible: appear, index: 0)
                     summaryRow

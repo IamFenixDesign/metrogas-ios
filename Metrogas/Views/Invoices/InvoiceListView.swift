@@ -25,10 +25,13 @@ struct InvoiceListView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if store.invoices.isEmpty {
                     ScrollView {
-                        emptyState(noData: true)
-                            .padding(.horizontal, 20)
-                            .padding(.top, 12)
-                        FloatingTabBarSpacer()
+                        VStack(spacing: 12) {
+                            TabBarScrollProbe()
+                            emptyState(noData: true)
+                                .padding(.horizontal, 20)
+                                .padding(.top, 12)
+                            FloatingTabBarSpacer()
+                        }
                     }
                 } else {
                     invoiceScroll
@@ -48,6 +51,8 @@ struct InvoiceListView: View {
     private var invoiceScroll: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                TabBarScrollProbe()
+
                 summaryHeader
                     .appearMotion(visible: appear, index: 0)
 
