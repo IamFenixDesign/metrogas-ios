@@ -122,9 +122,12 @@ final class AppSession: ObservableObject {
 
         // Si la sesión del portal sigue viva, entrar directo.
         if await MetrogasAuthService.shared.probePortalSession() {
-            if loginHintMissing,
-               let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
+            let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
+            if let email = identity.email, !email.isEmpty {
                 loginEmail = email
+            }
+            if let customer = identity.customerNumber {
+                LinkedAccountStore.bind(email: loginEmail, customerNumber: customer)
             }
             lastLoginMethod = .google
             let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
@@ -179,18 +182,36 @@ final class AppSession: ObservableObject {
     func handleGoogleAuthNavigation(_ url: URL) {
         guard googleFlowActive, let host = url.host?.lowercased() else { return }
 
+        // Capturar email desde la URL de Google apenas aparece (login_hint / Email).
+        if host.contains("accounts.google.com") || host.contains("google.com") {
+            if let email = MetrogasAuthService.emailFromOAuthURL(url) {
+                loginEmail = email
+            }
+            return
+        }
+
         if MetrogasURLs.isMetrogasPortalHost(host) {
             Task {
                 await WebCookieBridge.syncWebKitCookiesToHTTP()
-                // Resolver el email real de Google/SAP ANTES de marcar autenticado,
-                // para sincronizar la cuenta correcta (no otra en caché).
-                for _ in 0..<8 {
-                    if let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
-                        loginEmail = email
-                        break
+                // Siempre re-resolver identidad Google/SAP (no conservar un email viejo).
+                var resolvedEmail = loginEmail
+                var resolvedCustomer: String?
+                for _ in 0..<6 {
+                    let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
+                    if let email = identity.email, !email.isEmpty {
+                        resolvedEmail = email
                     }
-                    if !loginHintMissing { break }
-                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    if let customer = identity.customerNumber {
+                        resolvedCustomer = customer
+                    }
+                    if resolvedEmail != nil { break }
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+                if let resolvedEmail {
+                    loginEmail = resolvedEmail
+                }
+                if let resolvedCustomer {
+                    LinkedAccountStore.bind(email: loginEmail, customerNumber: resolvedCustomer)
                 }
                 lastLoginMethod = .google
                 googleFlowActive = false
