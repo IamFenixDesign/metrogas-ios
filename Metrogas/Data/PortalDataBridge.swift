@@ -44,7 +44,7 @@ final class PortalDataBridge: NSObject {
                 accountId: linkedId,
                 loginHint: loginHint,
                 startURLs: [MetrogasURLs.saldosGo(accountId: linkedId)],
-                timeoutSeconds: min(26, timeoutSeconds)
+                timeoutSeconds: min(16, timeoutSeconds)
             )
             account = MetrogasJSONParser.mergeAccount(account, saldos.account)
             account.customerNumber = linkedId
@@ -56,18 +56,16 @@ final class PortalDataBridge: NSObject {
             return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
         }
 
-        // 1) Portal autenticado: descubrir N° de cliente ligado a esta sesión.
+        // 1) Portal autenticado: descubrir N° (pocas URLs, corta rápido).
         let discovery = try await runCapture(
             mode: .discover,
             accountId: "",
             loginHint: loginHint,
             startURLs: [
                 MetrogasURLs.portalOV2,
-                MetrogasURLs.accesoOV2,
-                MetrogasURLs.portalMobile,
-                MetrogasURLs.acceso
+                MetrogasURLs.portalMobile
             ],
-            timeoutSeconds: min(18, timeoutSeconds * 0.45)
+            timeoutSeconds: min(10, timeoutSeconds * 0.4)
         )
 
         account = MetrogasJSONParser.mergeAccount(account, discovery.account)
@@ -92,7 +90,7 @@ final class PortalDataBridge: NSObject {
             accountId: accountId,
             loginHint: loginHint,
             startURLs: [MetrogasURLs.saldosGo(accountId: accountId)],
-            timeoutSeconds: max(22, timeoutSeconds * 0.55)
+            timeoutSeconds: max(14, timeoutSeconds * 0.6)
         )
 
         account = MetrogasJSONParser.mergeAccount(account, saldos.account)
@@ -341,13 +339,13 @@ final class PortalDataBridge: NSObject {
           post('dom', { text: text.substring(0, 250000), href: location.href });
         } catch (e) {}
       }
-      setInterval(scrape, 2200);
-      setTimeout(scrape, 1200);
+      setInterval(scrape, 1400);
+      setTimeout(scrape, 400);
       post('ready', { href: location.href });
     })();
     """
 
-    /// Desde el portal autenticado, prueba endpoints, lee storage/UI5 y reporta el N° ligado.
+    /// Lee storage/UI5/DOM del portal autenticado y reporta el N° ligado (sin XHR basura).
     private static let discoveryProbeScript = """
     (function() {
       if (window.__metrogasDiscoveryProbe) return;
@@ -366,7 +364,7 @@ final class PortalDataBridge: NSObject {
         return out;
       }
       function walk(node, bag, depth) {
-        if (!node || depth > 8) return;
+        if (!node || depth > 7) return;
         if (typeof node === 'string' || typeof node === 'number') {
           collectElevenDigitIds(String(node)).forEach(function(id) {
             if (bag.indexOf(id) === -1) bag.push(id);
@@ -374,25 +372,17 @@ final class PortalDataBridge: NSObject {
           return;
         }
         if (Array.isArray(node)) {
-          node.slice(0, 80).forEach(function(item) { walk(item, bag, depth + 1); });
+          node.slice(0, 60).forEach(function(item) { walk(item, bag, depth + 1); });
           return;
         }
         if (typeof node === 'object') {
           Object.keys(node).forEach(function(k) {
-            var lk = k.toLowerCase();
-            var val = node[k];
-            if (lk.indexOf('account') !== -1 || lk.indexOf('cliente') !== -1 || lk.indexOf('cust') !== -1 || lk.indexOf('cuenta') !== -1 || lk.indexOf('contrato') !== -1 || lk === 'vkont') {
-              walk(val, bag, depth + 1);
-            } else {
-              walk(val, bag, depth + 1);
-            }
+            walk(node[k], bag, depth + 1);
           });
         }
       }
       var found = [];
       try {
-        walk(window.localStorage, found, 0);
-        walk(window.sessionStorage, found, 0);
         for (var i = 0; i < localStorage.length; i++) {
           walk(localStorage.getItem(localStorage.key(i)), found, 0);
         }
@@ -404,7 +394,7 @@ final class PortalDataBridge: NSObject {
         if (window.sap && sap.ui && sap.ui.getCore) {
           var core = sap.ui.getCore();
           if (core && core.getModel) {
-            ['', 'appModel', 'device', 'i18n'].forEach(function(name) {
+            ['', 'appModel'].forEach(function(name) {
               try {
                 var model = name ? core.getModel(name) : core.getModel();
                 if (model && model.getData) walk(model.getData(), found, 0);
@@ -428,45 +418,7 @@ final class PortalDataBridge: NSObject {
           body: JSON.stringify({ accountId: found[0], linkedAccounts: found, source: 'portal-session' })
         });
       }
-      var paths = [
-        '/OvServiceHub/api/v1/web/M360/account',
-        '/OvServiceHub/api/v1/web/M360/accounts',
-        '/OvServiceHub/api/v1/web/M360/customer',
-        '/OvServiceHub/api/v1/web/M360/profile',
-        '/OvServiceHub/api/v1/web/M360/home',
-        '/OvServiceHub/api/v1/web/M360/dashboard',
-        '/OvServiceHub/api/v1/web/M360/invoices',
-        '/OvServiceHub/api/v1/web/M360/billing',
-        '/OvServiceHub/api/v1/web/M360/balance',
-        '/OvServiceHub/api/v1/web/M360/consumption',
-        '/OvServiceHub/api/v1/secured/M360/account',
-        '/OvServiceHub/api/v1/secured/M360/invoices',
-        '/OvServiceHub/api/v1/secured/M360/balance',
-        '/OvServiceHub/api/v1/M360/account',
-        '/OvServiceHub/api/v1/M360/customer',
-        '/OvServiceHub/api/v1/M360/accounts'
-      ];
-      var pending = paths.length;
-      function doneOne() {
-        pending--;
-        if (pending <= 0) post('discoverDone', { href: location.href, linked: found });
-      }
-      paths.forEach(function(path) {
-        try {
-          var xhr = new XMLHttpRequest();
-          xhr.open('GET', path, true);
-          xhr.setRequestHeader('Accept', 'application/json,*/*');
-          xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-          xhr.onreadystatechange = function() {
-            if (xhr.readyState === 4) {
-              post('net', { url: path, method: 'GET', status: xhr.status, body: (xhr.responseText || '').substring(0, 600000) });
-              doneOne();
-            }
-          };
-          xhr.send();
-        } catch (e) { doneOne(); }
-      });
-      setTimeout(function() { post('discoverDone', { href: location.href, linked: found }); }, 8000);
+      post('discoverDone', { href: location.href, linked: found });
     })();
     """
 
@@ -531,7 +483,7 @@ final class PortalDataBridge: NSObject {
                 }
                 window.grecaptcha.reset(window.__mgCaptchaId);
                 window.grecaptcha.execute(window.__mgCaptchaId);
-                setTimeout(function() { finish(''); }, 12000);
+                setTimeout(function() { finish(''); }, 7000);
               } catch (e) { finish(''); }
             });
           }
@@ -553,28 +505,16 @@ final class PortalDataBridge: NSObject {
             });
           }
 
-          function getJSON(path, cb) {
-            getToken(function(token) {
-              if (!token) { cb(0, ''); return; }
-              // captcha va en el path: /publicSubscription/{account}/{token}
-              var url = path;
-              if (path.indexOf('/publicSubscription/') !== -1) {
-                if (url.charAt(url.length - 1) !== '/') { url = url + '/'; }
-                url = url + token;
-              }
-              var xhr = new XMLHttpRequest();
-              xhr.open('GET', url, true);
-              xhr.setRequestHeader('Accept', 'application/json,*/*');
-              xhr.onreadystatechange = function() {
-                if (xhr.readyState === 4) cb(xhr.status, xhr.responseText || '');
-              };
-              xhr.send();
-            });
-          }
-
           function run() {
             postNative('syncStart', { accountId: ACCOUNT });
-            // Primero listR2: trae historial completo (pagadas + pendientes).
+            var finished = false;
+            function finishSync() {
+              if (finished) return;
+              finished = true;
+              postNative('syncDone', { accountId: ACCOUNT });
+            }
+            // listR2 (facturas) + billing (titular/deuda). Consumo en paralelo opcional.
+            // Cortamos sin publicSubscription para ir más rápido.
             postJSON('/OvServiceHub/api/v1/M360/publicinvoice/listR2', {
               accountId: ACCOUNT
             }, function(status2, body2) {
@@ -583,22 +523,17 @@ final class PortalDataBridge: NSObject {
                 accountId: ACCOUNT, relation: 'FD'
               }, function(status, body) {
                 postNative('net', { url: '/OvServiceHub/api/v1/M360/publicbilling/r2', method: 'POST', status: status, body: body });
+                finishSync();
+                // Consumo en background; si llega, se captura por el hook.
                 postJSON('/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, {}, function(status3, body3) {
                   postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, method: 'POST', status: status3, body: body3 });
-                  // Email de factura digital (y datos de contacto si existen).
-                  getJSON('/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, function(status4, body4) {
-                    postNative('net', { url: '/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, method: 'GET', status: status4, body: body4 });
-                    getJSON('/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, function(status5, body5) {
-                      postNative('net', { url: '/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, method: 'GET', status: status5, body: body5 });
-                      postNative('syncDone', { accountId: ACCOUNT });
-                    });
-                  });
                 });
               });
             });
+            setTimeout(finishSync, 14000);
           }
 
-          ensureRecaptcha(function() { setTimeout(run, 900); });
+          ensureRecaptcha(function() { setTimeout(run, 250); });
         })();
         """
     }
@@ -629,6 +564,7 @@ extension PortalDataBridge: WKScriptMessageHandler {
                 || trimmed.hasPrefix("{")
                 || trimmed.hasPrefix("[") {
                 captured.append((url, body))
+                maybeFinishSaldosEarly(url: url)
             }
         } else if type == "dom", let payload = dict["payload"] as? [String: Any] {
             if let text = payload["text"] as? String, text.count > domText.count {
@@ -637,35 +573,55 @@ extension PortalDataBridge: WKScriptMessageHandler {
         } else if type == "ready" {
             if mode == .discover {
                 Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    try? await Task.sleep(nanoseconds: 500_000_000)
                     triggerPortalDiscoveryProbe()
-                    try? await Task.sleep(nanoseconds: 2_500_000_000)
-                    loadNextPageIfNeeded()
                 }
             } else {
                 Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                    try? await Task.sleep(nanoseconds: 350_000_000)
                     triggerSaldosAPISyncIfNeeded()
                 }
             }
         } else if type == "discoverDone" {
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
-                // Si ya hay N° de cliente usable, podemos cortar discovery.
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                // Si ya hay N° de cliente usable, cortar discovery al toque.
                 let early = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
                 if MetrogasURLs.normalizedCustomerNumber(early.account.customerNumber) != nil
                     || MetrogasJSONParser.firstCustomerNumber(in: domText) != nil {
-                    if pageQueue.isEmpty {
-                        await completeIfNeeded()
-                    } else {
-                        loadNextPageIfNeeded()
-                    }
-                } else {
+                    await completeIfNeeded()
+                } else if !pageQueue.isEmpty {
                     loadNextPageIfNeeded()
+                } else {
+                    await completeIfNeeded()
                 }
             }
         } else if type == "syncDone" {
             Task { await completeIfNeeded() }
+        }
+    }
+
+    private func maybeFinishSaldosEarly(url: String) {
+        guard mode == .saldos, continuation != nil else { return }
+        let isList = url.localizedCaseInsensitiveContains("listR2")
+        let isBilling = url.localizedCaseInsensitiveContains("publicbilling")
+        guard isList || isBilling else { return }
+
+        Task { @MainActor in
+            let early = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
+            let hasInvoices = !early.invoices.isEmpty
+            let hasProfile = !early.account.holderName.isEmpty
+                || MetrogasURLs.normalizedCustomerNumber(early.account.customerNumber) != nil
+            if hasInvoices && (hasProfile || isBilling) {
+                await completeIfNeeded()
+            } else if hasInvoices && isList {
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                guard continuation != nil else { return }
+                let again = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
+                if !again.invoices.isEmpty {
+                    await completeIfNeeded()
+                }
+            }
         }
     }
 }
@@ -675,12 +631,12 @@ extension PortalDataBridge: WKNavigationDelegate {
         webView.evaluateJavaScript(Self.hookScript, completionHandler: nil)
         if mode == .saldos {
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 1_400_000_000)
+                try? await Task.sleep(nanoseconds: 450_000_000)
                 triggerSaldosAPISyncIfNeeded()
             }
         } else {
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                try? await Task.sleep(nanoseconds: 400_000_000)
                 triggerPortalDiscoveryProbe()
             }
         }

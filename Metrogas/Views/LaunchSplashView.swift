@@ -101,17 +101,17 @@ struct RootContainerView: View {
     }
 
     private func syncAfterLogin() async {
-        // Esperar email de Google/SAP antes de syncar la cuenta correcta.
-        for _ in 0..<12 {
-            if let email = session.loginEmail,
-               !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                break
-            }
-            if let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
+        // Re-resolver identidad Google/SAP y vincular N° antes del sync M360.
+        for _ in 0..<8 {
+            let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
+            if let email = identity.email, !email.isEmpty {
                 session.loginEmail = email
-                break
             }
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            if let customer = identity.customerNumber {
+                LinkedAccountStore.bind(email: session.loginEmail, customerNumber: customer)
+            }
+            if session.loginEmail?.contains("@") == true { break }
+            try? await Task.sleep(nanoseconds: 200_000_000)
         }
 
         await store.refresh(loginHint: session.loginEmail, force: true)

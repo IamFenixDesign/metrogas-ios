@@ -207,13 +207,21 @@ final class AccountDataStore: ObservableObject {
         needsCustomerNumber = false
         defer { isLoading = false }
 
+        // Identidad fresca (Google) antes de elegir N° vinculado.
+        let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
         let emailHint: String? = {
             if let loginHint, !loginHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return loginHint
             }
+            if let email = identity.email, !email.isEmpty { return email }
             return account.email.isEmpty ? nil : account.email
         }()
         if let emailHint { applyLoginHint(email: emailHint) }
+        if let customer = identity.customerNumber {
+            LinkedAccountStore.bind(email: emailHint, customerNumber: customer)
+            account.customerNumber = customer
+            customerNumberDraft = customer
+        }
 
         let saved = CredentialStore.load()
         do {
@@ -234,7 +242,7 @@ final class AccountDataStore: ObservableObject {
         }
 
         // N° ya asociado a esta cuenta Google/MetroGAS → carga automática.
-        let linkedId = preferredCustomerNumber(forLogin: emailHint)
+        let linkedId = preferredCustomerNumber(forLogin: emailHint) ?? identity.customerNumber
 
         do {
             let snapshot = try await MetrogasDataService.shared.fetchAccountData(
@@ -250,7 +258,7 @@ final class AccountDataStore: ObservableObject {
                 needsCustomerNumber = false
             }
 
-            // Email de login siempre gana como contacto de la sesión.
+            // Email de login (Google) siempre gana como contacto de la sesión.
             if let emailHint, !emailHint.isEmpty {
                 nextAccount.email = emailHint
             }

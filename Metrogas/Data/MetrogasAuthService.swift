@@ -218,26 +218,87 @@ actor MetrogasAuthService {
 
     /// Intenta leer el email de la sesión (útil tras Google OAuth).
     func resolveSignedInEmail() async -> String? {
-        // 1) Cookies con email tipico de IdP
+        let identity = await resolveSignedInIdentity()
+        return identity.email
+    }
+
+    /// Email + N° de cliente descubiertos rápido vía cookies/HTML (sin WebView).
+    func resolveSignedInIdentity() async -> (email: String?, customerNumber: String?) {
+        var email: String?
+        var customerNumber: String?
+
+        // 1) Cookies IdP / portal (priorizar nombres de usuario/email).
         if let cookies = cookieJar.cookies {
-            for cookie in cookies {
-                let value = cookie.value
-                if let email = MetrogasJSONParser.firstEmail(in: value) {
-                    return email.lowercased()
+            let prioritized = cookies.sorted { a, b in
+                scoreCookieForEmail(a) > scoreCookieForEmail(b)
+            }
+            for cookie in prioritized {
+                if email == nil, let found = MetrogasJSONParser.firstEmail(in: cookie.value) {
+                    // Evitar emails basura de trackers.
+                    if !found.contains("example.") && !found.hasSuffix(".local") {
+                        email = found.lowercased()
+                    }
                 }
-                let name = cookie.name.lowercased()
-                if (name.contains("email") || name.contains("mail") || name.contains("user")) ,
-                   value.contains("@"),
-                   let email = MetrogasJSONParser.firstEmail(in: value) {
-                    return email.lowercased()
+                if customerNumber == nil,
+                   let found = MetrogasJSONParser.firstCustomerNumber(in: cookie.value) {
+                    customerNumber = found
                 }
+                if email != nil, customerNumber != nil { break }
             }
         }
 
-        // 2) HTML del portal / login residual
-        for url in [MetrogasURLs.portalMobile, MetrogasURLs.portalOV2, MetrogasURLs.acceso] {
+        // 2) HTML del portal autenticado (rápido, 1–2 requests).
+        for url in [MetrogasURLs.portalOV2, MetrogasURLs.portalMobile, MetrogasURLs.accesoOV2] {
             guard let html = try? await loadHTML(url) else { continue }
-            if let email = MetrogasJSONParser.firstEmail(in: html) {
+            if email == nil, let found = MetrogasJSONParser.firstEmail(in: html) {
+                email = found.lowercased()
+            }
+            if customerNumber == nil,
+               let found = MetrogasJSONParser.firstCustomerNumber(in: html) {
+                customerNumber = found
+            }
+            if email != nil, customerNumber != nil { break }
+            // Shell autenticado sin N° visible: no seguir spameando.
+            if looksLikeAuthenticatedPortal(html: html, urlHint: url) { break }
+        }
+
+        return (email, customerNumber)
+    }
+
+    private func scoreCookieForEmail(_ cookie: HTTPCookie) -> Int {
+        let name = cookie.name.lowercased()
+        let domain = cookie.domain.lowercased()
+        var score = 0
+        if name.contains("email") || name.contains("mail") || name.contains("user") || name.contains("login") {
+            score += 5
+        }
+        if domain.contains("ondemand.com") || domain.contains("metrogas") || domain.contains("hana") {
+            score += 3
+        }
+        if domain.contains("google") { score += 1 }
+        return score
+    }
+
+    /// Extrae email de URLs de Google OAuth (`login_hint`, `Email`, etc.).
+    static func emailFromOAuthURL(_ url: URL) -> String? {
+        var candidates: [String] = []
+        if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            for item in comps.queryItems ?? [] {
+                let name = item.name.lowercased()
+                guard ["email", "login_hint", "loginhint", "username", "user_id"].contains(name),
+                      let value = item.value, value.contains("@") else { continue }
+                candidates.append(value)
+            }
+            if let fragment = comps.fragment, fragment.contains("@") {
+                candidates.append(fragment)
+            }
+        }
+        let absolute = url.absoluteString
+        if absolute.contains("@") {
+            candidates.append(absolute)
+        }
+        for raw in candidates {
+            if let email = MetrogasJSONParser.firstEmail(in: raw) {
                 return email.lowercased()
             }
         }
