@@ -3,7 +3,6 @@ import Charts
 
 struct ConsumptionView: View {
     @EnvironmentObject private var store: AccountDataStore
-    @EnvironmentObject private var session: AppSession
 
     var body: some View {
         NavigationStack {

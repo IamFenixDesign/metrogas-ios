@@ -2,7 +2,6 @@ import SwiftUI
 
 struct InvoiceListView: View {
     @EnvironmentObject private var store: AccountDataStore
-    @EnvironmentObject private var session: AppSession
 
     var body: some View {
         NavigationStack {
