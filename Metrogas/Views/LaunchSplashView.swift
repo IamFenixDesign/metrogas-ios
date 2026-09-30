@@ -49,27 +49,21 @@ struct RootContainerView: View {
                 }
             }
 
-            if showSplash || session.isRestoringSession {
+            if showSplash {
                 LaunchSplashView()
-                    .overlay(alignment: .bottom) {
-                        if session.isRestoringSession {
-                            ProgressView("Reanudando sesión…")
-                                .padding(.bottom, 48)
-                                .tint(.white)
-                                .foregroundStyle(.white)
-                        }
-                    }
                     .transition(.opacity)
                     .zIndex(1)
             }
         }
-        .animation(.easeInOut(duration: 0.35), value: session.isAuthenticated)
+        .animation(.easeInOut(duration: 0.25), value: session.isAuthenticated)
         .task {
-            await bootstrapSessionAndData()
-            try? await Task.sleep(nanoseconds: 450_000_000)
-            withAnimation(.easeOut(duration: 0.35)) {
+            // Splash corto; la restauración/sync corre en paralelo y no bloquea la UI.
+            async let bootstrap: Void = bootstrapSessionAndData()
+            try? await Task.sleep(nanoseconds: 280_000_000)
+            withAnimation(.easeOut(duration: 0.2)) {
                 showSplash = false
             }
+            await bootstrap
         }
         .onChange(of: session.isAuthenticated) { wasLoggedIn, loggedIn in
             // Solo sync al pasar de login → autenticado (una vez por sesión).
