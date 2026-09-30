@@ -160,13 +160,18 @@ final class AccountDataStore: ObservableObject {
         needsCustomerNumber = false
         defer { isLoading = false }
 
-        let email = loginHint ?? account.email
-        if let email { applyLoginHint(email: email) }
+        let emailHint: String? = {
+            if let loginHint, !loginHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return loginHint
+            }
+            return account.email.isEmpty ? nil : account.email
+        }()
+        if let emailHint { applyLoginHint(email: emailHint) }
 
         let saved = CredentialStore.load()
         do {
             _ = try await MetrogasAuthService.shared.ensureActiveSession(
-                email: saved?.email ?? email,
+                email: saved?.email ?? emailHint,
                 password: saved?.password
             )
         } catch MetrogasAuthError.sessionExpired {
@@ -182,11 +187,11 @@ final class AccountDataStore: ObservableObject {
         }
 
         // N° ya asociado a esta cuenta Google/MetroGAS → carga automática.
-        let linkedId = preferredCustomerNumber(forLogin: email)
+        let linkedId = preferredCustomerNumber(forLogin: emailHint)
 
         do {
             let snapshot = try await MetrogasDataService.shared.fetchAccountData(
-                loginHint: email,
+                loginHint: emailHint,
                 preferredAccountId: linkedId
             )
 
@@ -194,15 +199,15 @@ final class AccountDataStore: ObservableObject {
             if let id = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) ?? linkedId {
                 nextAccount.customerNumber = id
                 customerNumberDraft = id
-                LinkedAccountStore.bind(email: email ?? nextAccount.email, customerNumber: id)
+                LinkedAccountStore.bind(email: emailHint ?? nextAccount.email, customerNumber: id)
                 needsCustomerNumber = false
             }
 
-            if nextAccount.email.isEmpty {
-                nextAccount.email = email ?? ""
+            if nextAccount.email.isEmpty, let emailHint {
+                nextAccount.email = emailHint
             }
             if nextAccount.holderName.isEmpty {
-                applyLoginHint(email: email)
+                applyLoginHint(email: emailHint)
                 nextAccount.holderName = account.holderName
             }
 
