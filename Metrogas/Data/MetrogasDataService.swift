@@ -59,10 +59,9 @@ actor MetrogasDataService {
         if let customerNumber, let normalized = MetrogasURLs.normalizedCustomerNumber(customerNumber) {
             account.customerNumber = normalized
         }
+        // Solo email de login: el titular real viene de M360 (PVE_TITULAR).
         if let loginHint, !loginHint.isEmpty {
             account.email = loginHint
-            let local = loginHint.split(separator: "@").first.map(String.init) ?? loginHint
-            account.holderName = local.replacingOccurrences(of: ".", with: " ").capitalized
         }
         return account
     }

@@ -399,8 +399,8 @@ enum MetrogasJSONParser {
 
         return AccountProfile(
             holderName: firstNonEmpty(
-                stringValue(info, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE", "NOMBRE", "firstName"]),
-                fuzzyString(in: info, matching: ["titular", "nombre", "owner", "name"])
+                stringValue(info, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE"]),
+                fuzzyString(in: info, matching: ["titular"])
             ) ?? "",
             customerNumber: MetrogasURLs.normalizedCustomerNumber(customer) ?? customer,
             supplyAddress: parsedAddress.street ?? address,

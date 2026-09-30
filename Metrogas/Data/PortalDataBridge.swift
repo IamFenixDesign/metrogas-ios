@@ -35,8 +35,6 @@ final class PortalDataBridge: NSObject {
         var account = AccountProfile.empty
         if let loginHint, !loginHint.isEmpty {
             account.email = loginHint
-            let local = loginHint.split(separator: "@").first.map(String.init) ?? loginHint
-            account.holderName = local.replacingOccurrences(of: ".", with: " ").capitalized
         }
 
         // Camino rápido: N° vinculado → solo M360 (sin discovery de portal).
@@ -694,8 +692,6 @@ enum PortalPayloadParser {
         var account = AccountProfile.empty
         if let loginHint, !loginHint.isEmpty {
             account.email = loginHint
-            let local = loginHint.split(separator: "@").first.map(String.init) ?? loginHint
-            account.holderName = local.replacingOccurrences(of: ".", with: " ").capitalized
         }
 
         var invoices: [Invoice] = []
