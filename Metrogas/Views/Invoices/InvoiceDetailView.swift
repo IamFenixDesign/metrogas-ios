@@ -6,6 +6,7 @@ struct InvoiceDetailView: View {
 
     @State private var draftNotes: String = ""
     @State private var showPaidConfirmation = false
+    @State private var appear = false
     @FocusState private var notesFocused: Bool
 
     private var invoice: Invoice? {
@@ -22,8 +23,10 @@ struct InvoiceDetailView: View {
         }
         .navigationTitle("Detalle")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
         .onAppear {
             draftNotes = invoice?.notes ?? ""
+            withAnimation(MetrogasTheme.springSoft) { appear = true }
         }
         .alert("¿Marcar como pagada?", isPresented: $showPaidConfirmation) {
             Button("Cancelar", role: .cancel) {}
@@ -38,15 +41,20 @@ struct InvoiceDetailView: View {
     @ViewBuilder
     private func content(for invoice: Invoice) -> some View {
         ZStack {
-            MetrogasBackground()
+            LiquidGlassBackground()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     header(invoice)
+                        .appearMotion(visible: appear, index: 0)
                     detailsCard(invoice)
+                        .appearMotion(visible: appear, index: 1)
                     breakdownCard(invoice)
+                        .appearMotion(visible: appear, index: 2)
                     notesCard(invoice)
+                        .appearMotion(visible: appear, index: 3)
                     actions(invoice)
+                        .appearMotion(visible: appear, index: 4)
                 }
                 .padding(20)
             }
@@ -67,16 +75,14 @@ struct InvoiceDetailView: View {
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.primary)
+                .contentTransition(.numericText())
 
             Text(invoice.periodLabel)
-                .font(.title3.weight(.semibold))
+                .font(.system(.title3, design: .rounded).weight(.semibold))
         }
-        .padding(20)
+        .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-        )
+        .liquidGlass(cornerRadius: 24, prominent: true)
     }
 
     private func detailsCard(_ invoice: Invoice) -> some View {
@@ -93,7 +99,7 @@ struct InvoiceDetailView: View {
             detailRow("Punto de suministro", invoice.supplyPoint)
         }
         .padding(18)
-        .background(cardBackground)
+        .liquidGlass(cornerRadius: 22)
     }
 
     private func breakdownCard(_ invoice: Invoice) -> some View {
@@ -105,7 +111,7 @@ struct InvoiceDetailView: View {
             breakdownRow("Impuestos y tasas", invoice.breakdown.impuestos)
             breakdownRow("Otros conceptos", invoice.breakdown.otros)
 
-            Divider()
+            Divider().opacity(0.35)
 
             HStack {
                 Text("Total")
@@ -116,7 +122,7 @@ struct InvoiceDetailView: View {
             }
         }
         .padding(18)
-        .background(cardBackground)
+        .liquidGlass(cornerRadius: 22)
     }
 
     private func notesCard(_ invoice: Invoice) -> some View {
@@ -126,10 +132,14 @@ struct InvoiceDetailView: View {
             TextField("Agregar una nota…", text: $draftNotes, axis: .vertical)
                 .lineLimit(3...6)
                 .padding(12)
-                .background(
+                .background {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(.tertiarySystemFill))
-                )
+                        .fill(Color.white.opacity(0.45))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.4), lineWidth: 0.8)
+                        )
+                }
                 .focused($notesFocused)
 
             Button("Guardar nota") {
@@ -140,7 +150,7 @@ struct InvoiceDetailView: View {
             .disabled(draftNotes.trimmingCharacters(in: .whitespacesAndNewlines) == invoice.notes)
         }
         .padding(18)
-        .background(cardBackground)
+        .liquidGlass(cornerRadius: 22)
     }
 
     @ViewBuilder
@@ -152,10 +162,21 @@ struct InvoiceDetailView: View {
                 Label("Marcar como pagada", systemImage: "checkmark.circle.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 14)
+                    .foregroundStyle(.white)
+                    .background {
+                        Capsule(style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [MetrogasTheme.brandBlue, MetrogasTheme.brandCyan],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .shadow(color: MetrogasTheme.brandBlue.opacity(0.35), radius: 12, y: 6)
+                    }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(MetrogasTheme.brandBlue)
+            .buttonStyle(PressableGlassStyle())
         }
     }
 
@@ -180,10 +201,5 @@ struct InvoiceDetailView: View {
             Text(Formatters.money(value))
                 .font(.subheadline.monospacedDigit())
         }
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(Color(.secondarySystemGroupedBackground))
     }
 }

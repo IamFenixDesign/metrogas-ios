@@ -24,6 +24,7 @@ struct UpcomingDueSection: View {
                                     .foregroundStyle(invoice.status == .overdue
                                                      ? MetrogasTheme.danger
                                                      : MetrogasTheme.brandFlame)
+                                    .symbolEffect(.pulse, options: .repeating.speed(0.4), isActive: invoice.status == .overdue)
                                     .frame(width: 28)
 
                                 VStack(alignment: .leading, spacing: 3) {
@@ -40,21 +41,19 @@ struct UpcomingDueSection: View {
                                 Text(Formatters.money(invoice.amountARS))
                                     .font(.subheadline.weight(.bold).monospacedDigit())
                                     .foregroundStyle(.primary)
+                                    .contentTransition(.numericText())
                             }
                             .padding(.horizontal, 14)
                             .padding(.vertical, 12)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PressableGlassStyle())
 
                         if index < items.count - 1 {
-                            Divider().padding(.leading, 54)
+                            Divider().padding(.leading, 54).opacity(0.35)
                         }
                     }
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color(.secondarySystemGroupedBackground))
-                )
+                .liquidGlass(cornerRadius: 22)
             }
         }
     }

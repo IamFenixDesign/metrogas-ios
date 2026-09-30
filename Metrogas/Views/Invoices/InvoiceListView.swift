@@ -2,26 +2,31 @@ import SwiftUI
 
 struct InvoiceListView: View {
     @EnvironmentObject private var store: AccountDataStore
+    @State private var appear = false
 
     var body: some View {
         NavigationStack {
             ZStack {
-                MetrogasBackground()
+                LiquidGlassBackground()
 
                 VStack(spacing: 0) {
                     filterBar
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .padding(.bottom, 12)
+                        .appearMotion(visible: appear, index: 0)
 
                     if store.isLoading && store.invoices.isEmpty {
                         ProgressView("Cargando facturas…")
+                            .padding(20)
+                            .liquidGlass(cornerRadius: 20)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if store.filteredInvoices.isEmpty {
                         emptyState
+                            .appearMotion(visible: appear, index: 1)
                     } else {
                         List {
-                            ForEach(store.filteredInvoices) { invoice in
+                            ForEach(Array(store.filteredInvoices.enumerated()), id: \.element.id) { index, invoice in
                                 NavigationLink {
                                     InvoiceDetailView(invoiceID: invoice.id)
                                 } label: {
@@ -29,11 +34,28 @@ struct InvoiceListView: View {
                                 }
                                 .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                                 .listRowBackground(
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        .fill(Color(.secondarySystemGroupedBackground))
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .fill(.ultraThinMaterial)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                                .strokeBorder(
+                                                    LinearGradient(
+                                                        colors: [
+                                                            Color.white.opacity(0.55),
+                                                            Color.white.opacity(0.12),
+                                                            Color.white.opacity(0.3)
+                                                        ],
+                                                        startPoint: .topLeading,
+                                                        endPoint: .bottomTrailing
+                                                    ),
+                                                    lineWidth: 1
+                                                )
+                                        )
+                                        .shadow(color: Color.black.opacity(0.06), radius: 10, y: 4)
                                         .padding(.vertical, 4)
                                 )
                                 .listRowSeparator(.hidden)
+                                .appearMotion(visible: appear, index: min(index + 1, 6))
                             }
                         }
                         .listStyle(.plain)
@@ -42,6 +64,7 @@ struct InvoiceListView: View {
                 }
             }
             .navigationTitle("Facturas")
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .searchable(text: $store.searchText, prompt: "Buscar por número o período")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -52,6 +75,9 @@ struct InvoiceListView: View {
                         .accessibilityHidden(true)
                 }
             }
+            .onAppear {
+                withAnimation(MetrogasTheme.springSoft) { appear = true }
+            }
         }
     }
 
@@ -59,24 +85,11 @@ struct InvoiceListView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(InvoiceFilter.allCases) { filter in
-                    Button {
-                        withAnimation(.snappy) {
+                    GlassChip(title: filter.rawValue, selected: store.invoiceFilter == filter) {
+                        withAnimation(MetrogasTheme.springSnappy) {
                             store.invoiceFilter = filter
                         }
-                    } label: {
-                        Text(filter.rawValue)
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(store.invoiceFilter == filter
-                                          ? MetrogasTheme.brandBlue
-                                          : Color(.secondarySystemGroupedBackground))
-                            )
-                            .foregroundStyle(store.invoiceFilter == filter ? .white : .primary)
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .padding(.vertical, 2)
@@ -94,10 +107,13 @@ struct InvoiceListView: View {
                 store.invoices.isEmpty
                     ? (store.isLoading
                         ? "Estamos cargando las facturas de tu Oficina Virtual…"
-                        : "Deslizá hacia abajo para reintentar la sync automática.")
+                        : "Las facturas aparecen cuando sincronizás al iniciar sesión.")
                     : "Probá otro filtro o borrá la búsqueda."
             )
         }
+        .padding(24)
+        .liquidGlass(cornerRadius: 24)
+        .padding(.horizontal, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

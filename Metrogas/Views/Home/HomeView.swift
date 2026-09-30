@@ -2,35 +2,48 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var store: AccountDataStore
+    @State private var appear = false
 
     var body: some View {
         NavigationStack {
             ZStack {
-                MetrogasBackground()
+                LiquidGlassBackground()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         brandHero
+                            .appearMotion(visible: appear, index: 0)
+
                         if store.isLoading {
                             ProgressView("Sincronizando tu cuenta…")
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
+                                .padding(.vertical, 10)
+                                .padding(.horizontal, 16)
+                                .liquidGlass(cornerRadius: 18)
+                                .appearMotion(visible: appear, index: 1)
                         }
+
                         if let message = store.syncMessage {
                             Text(message)
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .padding(14)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .fill(Color(.secondarySystemGroupedBackground))
-                                )
+                                .liquidGlass(cornerRadius: 18)
+                                .appearMotion(visible: appear, index: 1)
                         }
+
                         nextInvoiceCard
+                            .appearMotion(visible: appear, index: 2)
+
                         UpcomingDueSection()
+                            .appearMotion(visible: appear, index: 3)
+
                         quickMetrics
+                            .appearMotion(visible: appear, index: 4)
+
                         recentActivity
+                            .appearMotion(visible: appear, index: 5)
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 28)
@@ -38,18 +51,25 @@ struct HomeView: View {
             }
             .navigationTitle("Inicio")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            .onAppear {
+                withAnimation(MetrogasTheme.springSoft) { appear = true }
+            }
         }
     }
 
     private var brandHero: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            MetrogasLogo(height: 30, alignment: .leading)
+                .frame(maxWidth: 140, alignment: .leading)
+
             Text("Tu gas natural en un vistazo")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
 
             let first = store.account.holderName.components(separatedBy: " ").first
             Text(first?.isEmpty == false ? "Hola, \(first!)" : "Hola")
-                .font(.title2.weight(.semibold))
+                .font(.system(.title2, design: .rounded).weight(.semibold))
                 .foregroundStyle(.primary)
         }
         .padding(.top, 4)
@@ -66,7 +86,7 @@ struct HomeView: View {
                     HStack {
                         Text(invoice.status == .overdue ? "Factura vencida" : "Próximo vencimiento")
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.9))
+                            .foregroundStyle(.white.opacity(0.92))
                         Spacer()
                         StatusBadge(status: invoice.status)
                             .colorScheme(.light)
@@ -76,6 +96,7 @@ struct HomeView: View {
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .monospacedDigit()
+                        .contentTransition(.numericText())
 
                     HStack {
                         Label(invoice.periodLabel, systemImage: "calendar")
@@ -88,24 +109,52 @@ struct HomeView: View {
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.white.opacity(0.88))
                 }
-                .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    MetrogasTheme.deepNavy,
-                                    MetrogasTheme.brandBlue,
-                                    MetrogasTheme.brandCyan.opacity(0.95)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
+                .padding(22)
+                .background {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        MetrogasTheme.deepNavy,
+                                        MetrogasTheme.brandBlue,
+                                        MetrogasTheme.brandCyan.opacity(0.95)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
                             )
-                        )
-                        .shadow(color: MetrogasTheme.brandBlue.opacity(0.35), radius: 16, y: 8)
-                )
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.28),
+                                        Color.white.opacity(0.02),
+                                        Color.white.opacity(0.12)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .blendMode(.plusLighter)
+                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.55),
+                                        Color.white.opacity(0.12),
+                                        Color.white.opacity(0.3)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1
+                            )
+                    }
+                    .shadow(color: MetrogasTheme.brandBlue.opacity(0.35), radius: 18, y: 10)
+                }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressableGlassStyle())
         } else if !store.isLoading {
             VStack(alignment: .leading, spacing: 8) {
                 Text(store.invoices.isEmpty ? "Sin facturas todavía" : "Estás al día")
@@ -120,10 +169,7 @@ struct HomeView: View {
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(.secondarySystemGroupedBackground))
-            )
+            .liquidGlass(cornerRadius: 22)
         }
     }
 
@@ -154,10 +200,7 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(.secondarySystemGroupedBackground))
-                    )
+                    .liquidGlass(cornerRadius: 20)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(store.invoices.prefix(4))) { invoice in
@@ -166,18 +209,15 @@ struct HomeView: View {
                         } label: {
                             InvoiceRowView(invoice: invoice, compact: true)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(PressableGlassStyle())
 
                         if invoice.id != store.invoices.prefix(4).last?.id {
-                            Divider().padding(.leading, 12)
+                            Divider().padding(.leading, 12).opacity(0.35)
                         }
                     }
                 }
                 .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color(.secondarySystemGroupedBackground))
-                )
+                .liquidGlass(cornerRadius: 22)
             }
         }
     }
