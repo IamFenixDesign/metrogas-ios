@@ -142,12 +142,23 @@ enum MetrogasJSONParser {
         return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
     }
 
-    static func firstCustomerNumber(in text: String) -> String? {
-        if let labeled = firstMatch(text, #"(?:N[°º]?\s*(?:de\s*)?cliente|Cliente|Account|Contrato)\s*[:#]?\s*([0-9]{11})"#),
+    /// Solo N° con etiqueta clara (Cliente / Contrato / Account). Evita IDs/timestamps basura.
+    static func labeledCustomerNumber(in text: String) -> String? {
+        if let labeled = firstMatch(
+            text,
+            #"(?:N[°º]?\s*(?:de\s*)?cliente|nro\.?\s*cliente|Cliente|AccountId|accountId|Contrato|ctaContrato|VKONT|PVE_NRO_CLIENTE)\s*[:#=\s]\s*([0-9]{11})"#
+        ),
            let normalized = MetrogasURLs.normalizedCustomerNumber(labeled) {
             return normalized
         }
-        // Fallback: primer bloque de 11 dígitos (evita teléfonos de 10).
+        return nil
+    }
+
+    static func firstCustomerNumber(in text: String) -> String? {
+        if let labeled = labeledCustomerNumber(in: text) {
+            return labeled
+        }
+        // Fallback laxo: solo cuando el caller lo necesita (p. ej. JSON ya filtrado).
         guard let raw = firstMatch(text, #"\b([0-9]{11})\b"#) else { return nil }
         return MetrogasURLs.normalizedCustomerNumber(raw)
     }

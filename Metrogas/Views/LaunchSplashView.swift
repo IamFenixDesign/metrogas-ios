@@ -101,16 +101,13 @@ struct RootContainerView: View {
     }
 
     private func syncAfterLogin() async {
-        // Re-resolver identidad Google/SAP y vincular N° antes del sync M360.
+        // Re-resolver email Google/SAP. El N° lo confirma LinkedAccountStore o M360.
         for _ in 0..<8 {
             let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
             if let email = identity.email, !email.isEmpty {
                 session.loginEmail = email
+                break
             }
-            if let customer = identity.customerNumber {
-                LinkedAccountStore.bind(email: session.loginEmail, customerNumber: customer)
-            }
-            if session.loginEmail?.contains("@") == true { break }
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
 
