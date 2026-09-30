@@ -17,7 +17,14 @@ struct StatusBadge: View {
             .foregroundStyle(tint)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(tint.opacity(0.14), in: Capsule(style: .continuous))
+            .background {
+                Capsule(style: .continuous)
+                    .fill(tint.opacity(0.16))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(tint.opacity(0.28), lineWidth: 0.8)
+                    )
+            }
             .accessibilityLabel("Estado: \(status.rawValue)")
     }
 }
@@ -51,6 +58,7 @@ struct MetricTile: View {
             Image(systemName: icon)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(accent)
+                .symbolEffect(.pulse, options: .repeating.speed(0.35), isActive: true)
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -63,9 +71,50 @@ struct MetricTile: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-        )
+        .liquidGlass(cornerRadius: 20)
+    }
+}
+
+struct GlassChip: View {
+    let title: String
+    var selected: Bool = false
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            if selected {
+                                Capsule(style: .continuous)
+                                    .fill(MetrogasTheme.brandBlue.opacity(0.92))
+                            }
+                        }
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .strokeBorder(
+                                    selected ? Color.white.opacity(0.35) : Color.white.opacity(0.45),
+                                    lineWidth: 1
+                                )
+                        )
+                }
+                .foregroundStyle(selected ? .white : .primary)
+        }
+        .buttonStyle(.plain)
+        .animation(MetrogasTheme.springSnappy, value: selected)
+    }
+}
+
+struct PressableGlassStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.92 : 1)
+            .animation(MetrogasTheme.springSnappy, value: configuration.isPressed)
     }
 }

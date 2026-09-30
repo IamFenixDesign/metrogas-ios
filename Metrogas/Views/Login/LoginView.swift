@@ -14,20 +14,23 @@ struct LoginView: View {
 
     var body: some View {
         ZStack {
-            background
+            LiquidGlassBackground()
 
             ScrollView {
                 VStack(spacing: 0) {
                     brandHeader
-                        .padding(.top, 48)
+                        .padding(.top, 56)
                         .padding(.bottom, 28)
+                        .appearMotion(visible: appear, index: 0)
 
                     loginCard
                         .padding(.horizontal, 20)
+                        .appearMotion(visible: appear, index: 1)
 
                     footerLinks
-                        .padding(.top, 20)
+                        .padding(.top, 22)
                         .padding(.bottom, 36)
+                        .appearMotion(visible: appear, index: 2)
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -43,32 +46,29 @@ struct LoginView: View {
             if email.isEmpty, let saved = session.loginEmail {
                 email = saved
             }
-            withAnimation(.easeOut(duration: 0.65)) { appear = true }
+            withAnimation(MetrogasTheme.springSoft) { appear = true }
         }
     }
 
     private var brandHeader: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 16) {
             Image("MetrogasLogo")
                 .resizable()
                 .scaledToFit()
                 .frame(height: 48)
-                .padding(.horizontal, 40)
-                .colorScheme(.dark)
-                .opacity(appear ? 1 : 0)
-                .offset(y: appear ? 0 : 10)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 18)
+                .liquidGlass(cornerRadius: 26, prominent: true)
 
             Text("Oficina Virtual")
-                .font(.system(size: 30, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .opacity(appear ? 1 : 0)
+                .font(.system(size: 32, weight: .bold, design: .rounded))
+                .foregroundStyle(.primary)
 
             Text("Ingresá con tu cuenta MetroGAS.")
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.88))
+                .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 28)
-                .opacity(appear ? 1 : 0)
         }
     }
 
@@ -98,8 +98,9 @@ struct LoginView: View {
             if let error = session.loginError {
                 Text(error)
                     .font(.footnote)
-                    .foregroundStyle(Color.red.opacity(0.95))
+                    .foregroundStyle(MetrogasTheme.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             Button {
@@ -115,17 +116,28 @@ struct LoginView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
+                .foregroundStyle(.white)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [MetrogasTheme.brandFlame, MetrogasTheme.brandFlame.opacity(0.85)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .shadow(color: MetrogasTheme.brandFlame.opacity(0.35), radius: 12, y: 6)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(MetrogasTheme.brandFlame)
+            .buttonStyle(PressableGlassStyle())
             .disabled(session.isLoggingIn)
 
             HStack {
-                Rectangle().fill(.white.opacity(0.25)).frame(height: 1)
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1)
                 Text("o")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.7))
-                Rectangle().fill(.white.opacity(0.25)).frame(height: 1)
+                    .foregroundStyle(.secondary)
+                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1)
             }
 
             Button {
@@ -140,65 +152,41 @@ struct LoginView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 13)
+                .foregroundStyle(.primary)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
+                        )
+                }
             }
-            .buttonStyle(.bordered)
-            .tint(.white)
+            .buttonStyle(PressableGlassStyle())
             .disabled(session.isLoggingIn)
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(.white.opacity(0.22), lineWidth: 1)
-                )
-        )
-        .opacity(appear ? 1 : 0)
-        .offset(y: appear ? 0 : 16)
+        .padding(22)
+        .liquidGlass(cornerRadius: 28, prominent: true)
     }
 
     private var footerLinks: some View {
         VStack(spacing: 12) {
             Link("Registrarme en Oficina Virtual", destination: MetrogasURLs.registro)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(MetrogasTheme.brandBlue)
 
             Link("Sitio oficial MetroGAS", destination: MetrogasURLs.sitioInstitucional)
                 .font(.caption.weight(.medium))
-                .foregroundStyle(.white.opacity(0.75))
+                .foregroundStyle(.secondary)
         }
-        .opacity(appear ? 1 : 0)
     }
 
     private var fieldBackground: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(Color.white.opacity(0.92))
-    }
-
-    private var background: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    MetrogasTheme.deepNavy,
-                    MetrogasTheme.brandBlue,
-                    MetrogasTheme.brandCyan
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(Color.white.opacity(0.72))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
             )
-            .ignoresSafeArea()
-
-            Circle()
-                .fill(MetrogasTheme.brandFlame.opacity(0.18))
-                .frame(width: 280, height: 280)
-                .blur(radius: 30)
-                .offset(x: 140, y: -220)
-
-            Circle()
-                .fill(Color.white.opacity(0.08))
-                .frame(width: 320, height: 320)
-                .offset(x: -160, y: 260)
-        }
     }
 }

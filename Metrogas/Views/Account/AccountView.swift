@@ -6,11 +6,12 @@ struct AccountView: View {
     @EnvironmentObject private var reminders: ReminderService
     @State private var showLogoutConfirm = false
     @State private var customerNumberError: String?
+    @State private var appear = false
 
     var body: some View {
         NavigationStack {
             ZStack {
-                MetrogasBackground()
+                LiquidGlassBackground()
 
                 List {
                     Section {
@@ -21,6 +22,7 @@ struct AccountView: View {
                         }
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                        .appearMotion(visible: appear, index: 0)
                     }
 
                     if store.needsCustomerNumber {
@@ -49,6 +51,7 @@ struct AccountView: View {
                         } footer: {
                             Text("Solo si tu usuario Google/MetroGAS todavía no tiene N° asociado. Queda vinculado a esta cuenta para las próximas veces.")
                         }
+                        .listRowBackground(glassListRow)
                     }
 
                     Section("Suministro") {
@@ -59,11 +62,13 @@ struct AccountView: View {
                         labeled("Localidad", store.account.locality)
                         labeled("CP", store.account.postalCode)
                     }
+                    .listRowBackground(glassListRow)
 
                     Section("Contacto") {
                         labeled("Email", displayEmail)
                         labeled("Teléfono", store.account.phone)
                     }
+                    .listRowBackground(glassListRow)
 
                     Section {
                         Toggle("Recordatorios de vencimiento", isOn: $reminders.remindersEnabled)
@@ -89,6 +94,7 @@ struct AccountView: View {
                             Text("Avisos nativos de iOS según tus facturas sincronizadas.")
                         }
                     }
+                    .listRowBackground(glassListRow)
 
                     Section("Preferencias") {
                         Picker("Apariencia", selection: $session.appearanceMode) {
@@ -103,12 +109,14 @@ struct AccountView: View {
                         if store.isLoading {
                             Label("Sincronizando con tu cuenta…", systemImage: "arrow.triangle.2.circlepath")
                                 .foregroundStyle(.secondary)
+                                .symbolEffect(.pulse, options: .repeating.speed(0.6), isActive: store.isLoading)
                         } else if let last = store.lastSync {
                             Text("Última sync: \(DateFormatter.metrogasDayMonthYear.string(from: last))")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .listRowBackground(glassListRow)
 
                     Section {
                         Button("Cerrar sesión", role: .destructive) {
@@ -117,12 +125,17 @@ struct AccountView: View {
                     } footer: {
                         Text("Al cerrar sesión se borran cookies y datos sincronizados de este dispositivo.")
                     }
+                    .listRowBackground(glassListRow)
                 }
                 .scrollContentBackground(.hidden)
             }
             .navigationTitle("Cuenta")
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .task {
                 await reminders.refreshAuthorizationStatus()
+            }
+            .onAppear {
+                withAnimation(MetrogasTheme.springSoft) { appear = true }
             }
             .alert("¿Cerrar sesión?", isPresented: $showLogoutConfirm) {
                 Button("Cancelar", role: .cancel) {}
@@ -138,6 +151,16 @@ struct AccountView: View {
         }
     }
 
+    private var glassListRow: some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.8)
+            )
+            .padding(.vertical, 2)
+    }
+
     private var displayEmail: String {
         if !store.account.email.isEmpty { return store.account.email }
         if let email = session.loginEmail, !email.isEmpty { return email }
@@ -148,14 +171,23 @@ struct AccountView: View {
         HStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [MetrogasTheme.brandBlue, MetrogasTheme.brandCyan],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ).opacity(0.18)
+                    .fill(.ultraThinMaterial)
+                    .frame(width: 68, height: 68)
+                    .overlay(
+                        Circle()
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.7),
+                                        MetrogasTheme.brandCyan.opacity(0.5),
+                                        Color.white.opacity(0.2)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1.2
+                            )
                     )
-                    .frame(width: 64, height: 64)
                 Text(initials)
                     .font(.title2.weight(.bold))
                     .foregroundStyle(MetrogasTheme.brandBlue)
@@ -163,18 +195,15 @@ struct AccountView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(store.account.holderName.isEmpty ? "Cuenta MetroGAS" : store.account.holderName)
-                    .font(.title3.weight(.semibold))
+                    .font(.system(.title3, design: .rounded).weight(.semibold))
                 Text("Titular del servicio")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer()
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-        )
+        .padding(18)
+        .liquidGlass(cornerRadius: 22, prominent: true)
     }
 
     private var initials: String {

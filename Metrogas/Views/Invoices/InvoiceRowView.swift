@@ -8,7 +8,11 @@ struct InvoiceRowView: View {
         HStack(spacing: 14) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(MetrogasTheme.brandBlue.opacity(0.12))
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.4), lineWidth: 0.8)
+                    )
                     .frame(width: 44, height: 44)
                 Image(systemName: "doc.text.fill")
                     .foregroundStyle(MetrogasTheme.brandBlue)
@@ -30,6 +34,7 @@ struct InvoiceRowView: View {
                     .font(.subheadline.weight(.bold))
                     .monospacedDigit()
                     .foregroundStyle(.primary)
+                    .contentTransition(.numericText())
                 StatusBadge(status: invoice.status)
             }
         }

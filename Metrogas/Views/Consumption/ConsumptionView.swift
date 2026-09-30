@@ -3,24 +3,34 @@ import Charts
 
 struct ConsumptionView: View {
     @EnvironmentObject private var store: AccountDataStore
+    @State private var appear = false
 
     var body: some View {
         NavigationStack {
             ZStack {
-                MetrogasBackground()
+                LiquidGlassBackground()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         periodPicker
+                            .appearMotion(visible: appear, index: 0)
                         summaryRow
+                            .appearMotion(visible: appear, index: 1)
                         chartCard
+                            .appearMotion(visible: appear, index: 2)
                         comparisonCard
+                            .appearMotion(visible: appear, index: 3)
                         historyList
+                            .appearMotion(visible: appear, index: 4)
                     }
                     .padding(20)
                 }
             }
             .navigationTitle("Consumo")
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            .onAppear {
+                withAnimation(MetrogasTheme.springSoft) { appear = true }
+            }
         }
     }
 
@@ -31,6 +41,8 @@ struct ConsumptionView: View {
             }
         }
         .pickerStyle(.segmented)
+        .padding(6)
+        .liquidGlass(cornerRadius: 16)
     }
 
     private var summaryRow: some View {
@@ -79,7 +91,7 @@ struct ConsumptionView: View {
                             endPoint: .top
                         )
                     )
-                    .cornerRadius(6)
+                    .cornerRadius(8)
 
                     RuleMark(y: .value("Promedio", store.averageConsumption))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 4]))
@@ -94,14 +106,11 @@ struct ConsumptionView: View {
                     AxisMarks(position: .leading)
                 }
                 .frame(height: 220)
-                .animation(.easeInOut(duration: 0.35), value: store.consumptionPeriod)
+                .animation(MetrogasTheme.springSoft, value: store.consumptionPeriod)
             }
         }
         .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(.secondarySystemGroupedBackground))
-        )
+        .liquidGlass(cornerRadius: 22, prominent: true)
     }
 
     private var comparisonCard: some View {
@@ -123,6 +132,7 @@ struct ConsumptionView: View {
                         Image(systemName: "arrow.right")
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 8)
+                            .symbolEffect(.pulse, options: .repeating.speed(0.5), isActive: true)
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text(latest.fullPeriodLabel)
@@ -138,6 +148,7 @@ struct ConsumptionView: View {
                         Text(Formatters.signedPercent(delta))
                             .font(.headline.monospacedDigit())
                             .foregroundStyle(delta > 0 ? MetrogasTheme.danger : MetrogasTheme.success)
+                            .contentTransition(.numericText())
                     }
 
                     Text(deltaCopy(latest: latest, previous: previous))
@@ -145,10 +156,7 @@ struct ConsumptionView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(18)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color(.secondarySystemGroupedBackground))
-                )
+                .liquidGlass(cornerRadius: 22)
             }
         }
     }
@@ -161,8 +169,11 @@ struct ConsumptionView: View {
                 Text("Cuando haya lecturas sincronizadas, van a aparecer acá.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .liquidGlass(cornerRadius: 18)
             } else {
-                ForEach(store.visibleReadings.reversed()) { reading in
+                ForEach(Array(store.visibleReadings.reversed().enumerated()), id: \.element.id) { index, reading in
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(reading.fullPeriodLabel)
@@ -185,10 +196,8 @@ struct ConsumptionView: View {
                         }
                     }
                     .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color(.secondarySystemGroupedBackground))
-                    )
+                    .liquidGlass(cornerRadius: 16)
+                    .appearMotion(visible: appear, index: min(index + 5, 10))
                 }
             }
         }
