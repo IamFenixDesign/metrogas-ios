@@ -254,10 +254,15 @@ final class AppSession: ObservableObject {
             googleCompletionStarted = false
             var cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
             await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
-            // Segunda pasada de cookies para que el sync encuentre la sesión Google.
+            // Segunda pasada: el sync discovery usa la misma sesión WebKit que Google.
             await WebCookieBridge.syncWebKitCookiesToHTTP()
             cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
             await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            // Portal listo otra vez antes de marcar autenticado (evita sync con cookies a medias).
+            for _ in 0..<6 {
+                if await MetrogasAuthService.shared.probePortalSession() { break }
+                try? await Task.sleep(nanoseconds: 350_000_000)
+            }
             didBootstrapSession = true
             isAuthenticated = true
         }

@@ -161,18 +161,31 @@ final class AccountDataStore: ObservableObject {
         account.email = trimmed
 
         // Nunca fabricar titular desde el email: eso mostraba nombres falsos.
-        // El nombre real llega de M360 (PVE_TITULAR).
+        // El nombre real llega de M360 (PVE_TITULAR) tras discovery del portal.
         if looksLikeFabricatedName(account.holderName, email: trimmed) {
             account.holderName = ""
         }
 
-        if let linked = LinkedAccountStore.customerNumber(forEmail: trimmed) {
-            account.customerNumber = linked
-            customerNumberDraft = linked
-            needsCustomerNumber = false
-        } else if switchedAccount {
+        // No pintar N°/titular de un vínculo previo hasta que el sync confirme
+        // contra el portal de ESTA sesión Google (evita mostrar cuenta ajena).
+        if switchedAccount || LinkedAccountStore.customerNumber(forEmail: trimmed) == nil {
+            account.holderName = ""
             account.customerNumber = "—"
+            account.supplyAddress = "—"
+            account.locality = "—"
+            account.postalCode = "—"
+            account.phone = "—"
+            account.meterNumber = "—"
+            account.tariffCategory = "—"
             customerNumberDraft = ""
+        } else {
+            // Hay vínculo: dejar draft interno pero no inventar titular hasta M360.
+            if let linked = LinkedAccountStore.customerNumber(forEmail: trimmed) {
+                customerNumberDraft = linked
+            }
+            account.holderName = ""
+            account.customerNumber = "—"
+            account.supplyAddress = "—"
         }
         persistCache()
     }
@@ -238,9 +251,8 @@ final class AccountDataStore: ObservableObject {
             // Seguimos: cookies de Google/portal pueden seguir válidas.
         }
 
-        // Solo hint confirmado por email. Discovery del portal siempre corre en el service.
+        // Solo hint de orden (debe aparecer en candidatos del portal).
         let linkedId = LinkedAccountStore.customerNumber(forEmail: emailHint)
-        let previousId = MetrogasURLs.normalizedCustomerNumber(account.customerNumber)
 
         do {
             let snapshot = try await MetrogasDataService.shared.fetchAccountData(
@@ -263,11 +275,9 @@ final class AccountDataStore: ObservableObject {
             let syncLooksReal = confirmedId != nil && (hasFreshProfile || hasFreshInvoices)
 
             if syncLooksReal, let confirmedId {
-                // Reemplazo duro: no mezclar titular/facturas de otra cuenta en caché.
-                if previousId != confirmedId {
-                    invoices = []
-                    readings = []
-                }
+                // Reemplazo duro: datos del portal de ESTA sesión.
+                invoices = []
+                readings = []
                 account = nextAccount
                 account.customerNumber = confirmedId
                 customerNumberDraft = confirmedId
@@ -275,39 +285,28 @@ final class AccountDataStore: ObservableObject {
                 readings = snapshot.readings.isEmpty && !snapshot.invoices.isEmpty
                     ? MetrogasJSONParser.deriveReadings(from: snapshot.invoices)
                     : snapshot.readings
-                // Email Google/login → N° queda vinculado para las próximas sesiones.
                 LinkedAccountStore.bind(email: emailHint ?? nextAccount.email, customerNumber: confirmedId)
                 needsCustomerNumber = false
                 syncMessage = invoices.isEmpty
                     ? "No encontramos facturas todavía. Deslizá hacia abajo para reintentar."
                     : nil
-            } else if let linkedId, !invoices.isEmpty, previousId == linkedId {
-                // Google/OV: sync falló esta vez pero hay caché de la misma cuenta — no borrar.
-                needsCustomerNumber = false
-                syncMessage = "No pudimos actualizar ahora. Deslizá hacia abajo para reintentar."
             } else {
-                // Pedir N° sin tirar el email de login ni un vínculo previo a ciegas.
+                // No mostrar N°/titular ajenos ni conservar vínculo dudoso.
+                LinkedAccountStore.unbind(email: emailHint)
+                invoices = []
+                readings = []
+                account.holderName = ""
+                account.customerNumber = "—"
+                account.supplyAddress = "—"
+                account.locality = "—"
+                account.postalCode = "—"
+                account.phone = "—"
+                account.meterNumber = "—"
+                account.tariffCategory = "—"
                 if let emailHint { account.email = emailHint }
-                if let linkedId {
-                    account.customerNumber = linkedId
-                    customerNumberDraft = linkedId
-                    needsCustomerNumber = false
-                    syncMessage = "No pudimos actualizar tus facturas. Deslizá hacia abajo para reintentar."
-                } else {
-                    account.holderName = ""
-                    account.customerNumber = "—"
-                    account.supplyAddress = "—"
-                    account.locality = "—"
-                    account.postalCode = "—"
-                    account.phone = "—"
-                    account.meterNumber = "—"
-                    account.tariffCategory = "—"
-                    invoices = []
-                    readings = []
-                    customerNumberDraft = ""
-                    needsCustomerNumber = true
-                    syncMessage = "No pudimos asociar tu N° de cliente automáticamente. Cargalo en Cuenta (11 dígitos de tu factura) y queda vinculado."
-                }
+                customerNumberDraft = ""
+                needsCustomerNumber = true
+                syncMessage = "No pudimos asociar tu N° de cliente a esta sesión Google. Cargalo en Cuenta (11 dígitos de tu factura) una vez y queda vinculado."
             }
 
             lastSync = Date()

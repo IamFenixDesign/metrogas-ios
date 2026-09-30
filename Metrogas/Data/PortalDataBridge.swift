@@ -43,12 +43,27 @@ final class PortalDataBridge: NSObject {
 
         let preferred = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "")
 
-        // Camino rápido SOLO si hay vínculo confirmado y no se fuerza discovery.
+        // Camino rápido solo si el caller lo pide Y hay N° — igual se valida ownership abajo.
+        // En la práctica MetrogasDataService siempre fuerza discovery tras Google.
         if !forcePortalDiscovery, let linkedId = preferred {
-            return try await syncSaldosOnly(accountId: linkedId, loginHint: loginHint, base: account, timeout: min(16, timeoutSeconds))
+            let saldos = try await syncSaldosOnly(
+                accountId: linkedId,
+                loginHint: loginHint,
+                base: account,
+                timeout: min(16, timeoutSeconds)
+            )
+            let ownership = Self.emailOwnership(loginHint: loginHint, accountEmail: saldos.account.email)
+            // Sin match de email no confiamos en un N° “recordado” (M360 es público).
+            if ownership == .match || ownership == .unknown {
+                var out = saldos
+                if let loginHint, !loginHint.isEmpty { out.account.email = loginHint }
+                out.account.customerNumber = linkedId
+                return out
+            }
+            // mismatch → caer a discovery
         }
 
-        // 1) Portal autenticado: descubrir candidatos de N° ligados a ESTA sesión.
+        // 1) Portal autenticado de ESTA sesión Google/MetroGAS → candidatos reales.
         discoveredAccountIds = []
         let discovery = try await runCapture(
             mode: .discover,
@@ -60,12 +75,12 @@ final class PortalDataBridge: NSObject {
                 MetrogasURLs.accesoOV2,
                 MetrogasURLs.acceso
             ],
-            timeoutSeconds: min(18, timeoutSeconds * 0.5)
+            timeoutSeconds: min(20, timeoutSeconds * 0.5)
         )
 
         account = MetrogasJSONParser.mergeAccount(account, discovery.account)
 
-        let candidates = uniqueAccountIds(
+        let portalCandidates = uniqueAccountIds(
             discoveredAccountIds
             + [
                 MetrogasURLs.normalizedCustomerNumber(discovery.account.customerNumber),
@@ -74,29 +89,29 @@ final class PortalDataBridge: NSObject {
             ].compactMap { $0 }
         )
 
-        // Sin candidatos en el portal: si hay N° ya vinculado a ESTE email y la
-        // sesión está viva (típico tras Google), consultar M360 con ese N°.
-        var ordered = candidates
-        if ordered.isEmpty, let preferred {
-            ordered = [preferred]
-        }
-        guard !ordered.isEmpty else {
+        // Sin candidatos del portal → NO adivinar con preferred (evita titular/N° ajenos).
+        guard !portalCandidates.isEmpty else {
             return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
         }
 
+        var ordered = portalCandidates
         if let preferred, let idx = ordered.firstIndex(of: preferred) {
             ordered.remove(at: idx)
             ordered.insert(preferred, at: 0)
         }
 
-        // 2) Probar hasta 3 candidatos. Preferir match de email de factura digital,
-        // pero NO descartar mismatch: con Google el email de login suele diferir
-        // del email de adhesión a factura digital. La sesión del portal ya autoriza.
+        // 2) M360 solo enriquece N° ya vistos en el portal de esta sesión.
+        // Preferir match email Google == factura digital; si no hay email en M360,
+        // aceptar candidato del portal (la sesión OV ya lo autoriza).
+        // Mismatch estricto se SALTEA (sería otra cuenta).
         var matched: MetrogasDataSnapshot?
-        var unknown: MetrogasDataSnapshot?
-        var mismatched: MetrogasDataSnapshot?
+        var unknownFromPortal: MetrogasDataSnapshot?
         let saldosTimeout = max(14, timeoutSeconds * 0.45)
+        let portalSet = Set(portalCandidates)
+
         for accountId in ordered.prefix(3) {
+            guard portalSet.contains(accountId) else { continue }
+
             let saldos = try await syncSaldosOnly(
                 accountId: accountId,
                 loginHint: loginHint,
@@ -110,39 +125,26 @@ final class PortalDataBridge: NSObject {
                 || !saldos.invoices.isEmpty
             guard hasSignal else { continue }
 
+            var enriched = saldos
+            if let loginHint, !loginHint.isEmpty {
+                enriched.account.email = loginHint
+            }
+            enriched.account.customerNumber = accountId
+
             switch ownership {
             case .match:
-                // Email Google/login == email de factura digital → auto-completar N° y cuenta.
-                var auto = saldos
-                if let loginHint, !loginHint.isEmpty {
-                    auto.account.email = loginHint
-                }
-                auto.account.customerNumber = accountId
-                matched = auto
-                return auto
+                matched = enriched
+                return enriched
             case .unknown:
-                if unknown == nil { unknown = saldos }
+                if unknownFromPortal == nil { unknownFromPortal = enriched }
             case .mismatch:
-                if mismatched == nil { mismatched = saldos }
+                // Email de factura digital ≠ Google → no es esta cuenta. Seguir buscando.
+                continue
             }
         }
 
         if let matched { return matched }
-        if let unknown {
-            var trusted = unknown
-            if let loginHint, !loginHint.isEmpty {
-                trusted.account.email = loginHint
-            }
-            return trusted
-        }
-        if let mismatched {
-            // Sesión del portal ya autoriza; conservar email de login Google.
-            var trusted = mismatched
-            if let loginHint, !loginHint.isEmpty {
-                trusted.account.email = loginHint
-            }
-            return trusted
-        }
+        if let unknownFromPortal { return unknownFromPortal }
         return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
     }
 
