@@ -28,34 +28,27 @@ struct RootTabView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            tabContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Group {
+                switch selected {
+                case .home:
+                    HomeView()
+                case .invoices:
+                    InvoiceListView()
+                case .consumption:
+                    ConsumptionView()
+                case .account:
+                    AccountView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             glassTabBar
                 .padding(.horizontal, 20)
-                .padding(.bottom, 10)
+                .padding(.bottom, 8)
+                // El tab bar flota; el espacio lo reservan los scrolls de cada tab.
+                .allowsHitTesting(true)
         }
         .animation(MetrogasTheme.springSoft, value: selected)
-    }
-
-    @ViewBuilder
-    private var tabContent: some View {
-        Group {
-            switch selected {
-            case .home:
-                HomeView()
-            case .invoices:
-                InvoiceListView()
-            case .consumption:
-                ConsumptionView()
-            case .account:
-                AccountView()
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            // Reserva espacio real para el tab bar flotante sin tapar el scroll.
-            Color.clear.frame(height: 78)
-        }
     }
 
     private var glassTabBar: some View {
@@ -105,5 +98,14 @@ struct RootTabView: View {
         .buttonStyle(PressableGlassStyle())
         .accessibilityLabel(tab.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Espaciador inferior para que el tab bar flotante no tape filas/botones.
+struct FloatingTabBarSpacer: View {
+    var body: some View {
+        Color.clear
+            .frame(height: MetrogasTheme.floatingTabBarClearance)
+            .accessibilityHidden(true)
     }
 }

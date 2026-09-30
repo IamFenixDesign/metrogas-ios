@@ -135,6 +135,13 @@ struct AccountView: View {
                 }
                 .listRowBackground(glassListRow)
                 .listRowInsets(sectionRowInsets)
+
+                Section {
+                    FloatingTabBarSpacer()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
@@ -142,6 +149,7 @@ struct AccountView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Cuenta")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .task {
                 await reminders.refreshAuthorizationStatus()

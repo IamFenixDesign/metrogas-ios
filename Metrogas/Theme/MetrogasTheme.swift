@@ -32,6 +32,9 @@ enum MetrogasTheme {
     static let springSnappy = Animation.spring(response: 0.38, dampingFraction: 0.86)
     static let springSoft = Animation.spring(response: 0.55, dampingFraction: 0.84)
     static let springBouncy = Animation.spring(response: 0.45, dampingFraction: 0.72)
+
+    /// Alto reservado al final del scroll para el tab bar flotante (~barra + margen).
+    static let floatingTabBarClearance: CGFloat = 108
 }
 
 // MARK: - Liquid Glass surfaces
