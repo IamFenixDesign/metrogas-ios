@@ -649,24 +649,24 @@ final class PortalDataBridge: NSObject {
               finished = true;
               postNative('syncDone', { accountId: ACCOUNT });
             }
-            // Billing (titular/dirección/medidor) → publicAccount (contacto/perfil) →
-            // facturas → factura digital (email) → consumo.
+            // 1) Billing (titular + saldos/deudas) y 2) listR2 (historial facturas)
+            // son obligatorios. Contacto/consumo van después y no pueden cortar el sync.
             postJSON('/OvServiceHub/api/v1/M360/publicbilling/r2', {
               accountId: ACCOUNT, relation: 'FD'
             }, function(status, body) {
               postNative('net', { url: '/OvServiceHub/api/v1/M360/publicbilling/r2', method: 'POST', status: status, body: body });
-              postJSON('/OvServiceHub/api/v1/M360/publicAccount', {
-                accountId: ACCOUNT, relation: 'FD'
-              }, function(statusA, bodyA) {
-                postNative('net', { url: '/OvServiceHub/api/v1/M360/publicAccount', method: 'POST', status: statusA, body: bodyA });
-                postJSON('/OvServiceHub/api/v1/publicAccount', {
+              postJSON('/OvServiceHub/api/v1/M360/publicinvoice/listR2', {
+                accountId: ACCOUNT
+              }, function(status2, body2) {
+                postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/listR2', method: 'POST', status: status2, body: body2 });
+                postJSON('/OvServiceHub/api/v1/M360/publicAccount', {
                   accountId: ACCOUNT, relation: 'FD'
-                }, function(statusB, bodyB) {
-                  postNative('net', { url: '/OvServiceHub/api/v1/publicAccount', method: 'POST', status: statusB, body: bodyB });
-                  postJSON('/OvServiceHub/api/v1/M360/publicinvoice/listR2', {
-                    accountId: ACCOUNT
-                  }, function(status2, body2) {
-                    postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/listR2', method: 'POST', status: status2, body: body2 });
+                }, function(statusA, bodyA) {
+                  postNative('net', { url: '/OvServiceHub/api/v1/M360/publicAccount', method: 'POST', status: statusA, body: bodyA });
+                  postJSON('/OvServiceHub/api/v1/publicAccount', {
+                    accountId: ACCOUNT, relation: 'FD'
+                  }, function(statusB, bodyB) {
+                    postNative('net', { url: '/OvServiceHub/api/v1/publicAccount', method: 'POST', status: statusB, body: bodyB });
                     getJSON('/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, function(status4, body4) {
                       postNative('net', { url: '/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, method: 'GET', status: status4, body: body4 });
                       getJSON('/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, function(status5, body5) {
@@ -681,7 +681,7 @@ final class PortalDataBridge: NSObject {
                 });
               });
             });
-            setTimeout(finishSync, 22000);
+            setTimeout(finishSync, 28000);
           }
 
           ensureRecaptcha(function() { setTimeout(run, 400); });
@@ -777,34 +777,33 @@ extension PortalDataBridge: WKScriptMessageHandler {
     private func maybeFinishSaldosEarly(url: String) {
         guard mode == .saldos, continuation != nil else { return }
         let lower = url.lowercased()
-        let isProfileEndpoint = lower.contains("publicbilling")
+        // Evaluar al llegar facturas/contacto. Nunca cortar solo con perfil
+        // (publicAccount) porque eso mataba listR2 y dejaba Cuenta sin facturas.
+        guard lower.contains("listr2")
             || lower.contains("publicaccount")
             || lower.contains("publicsubscription")
-        guard isProfileEndpoint || lower.contains("listr2") else { return }
+            || lower.contains("consumption") else { return }
 
         Task { @MainActor in
-            // No cerrar hasta tener billing + intento de contacto (account/subscription).
             let urls = captured.map { $0.url.lowercased() }
+            // Obligatorios: billing (saldos/deudas) + listR2 (historial).
             guard urls.contains(where: { $0.contains("publicbilling") }) else { return }
+            guard urls.contains(where: { $0.contains("listr2") }) else { return }
+
+            let early = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
+            let hasInvoicesOrDebts = !early.invoices.isEmpty
+            let hasCoreProfile = !early.account.holderName.isEmpty
+                || (!early.account.supplyAddress.isEmpty && early.account.supplyAddress != "—")
+                || (!early.account.meterNumber.isEmpty && early.account.meterNumber != "—")
+            guard hasInvoicesOrDebts || hasCoreProfile else { return }
+
+            // Esperar al menos un intento de contacto para no perder email/teléfono.
             let triedContact = urls.contains(where: {
                 $0.contains("publicaccount") || $0.contains("publicsubscription")
             })
             guard triedContact else { return }
 
-            let early = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
-            let profile = early.account
-            let hasCoreProfile = !profile.holderName.isEmpty
-                || (!profile.supplyAddress.isEmpty && profile.supplyAddress != "—")
-                || (!profile.meterNumber.isEmpty && profile.meterNumber != "—")
-            // Perfil “completo” para Cuenta: titular + domicilio + (email o teléfono si vino).
-            let hasContact = !profile.email.isEmpty
-                || (!profile.phone.isEmpty && profile.phone != "—")
-            let contactAttemptDone = urls.contains(where: { $0.contains("publicsubscription") })
-                && urls.contains(where: { $0.contains("publicaccount") })
-
-            if hasCoreProfile && (hasContact || contactAttemptDone) {
-                await completeIfNeeded()
-            }
+            await completeIfNeeded()
         }
     }
 }
