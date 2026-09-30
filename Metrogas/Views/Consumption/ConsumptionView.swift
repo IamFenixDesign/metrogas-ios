@@ -7,26 +7,25 @@ struct ConsumptionView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                LiquidGlassBackground()
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        periodPicker
-                            .appearMotion(visible: appear, index: 0)
-                        summaryRow
-                            .appearMotion(visible: appear, index: 1)
-                        chartCard
-                            .appearMotion(visible: appear, index: 2)
-                        comparisonCard
-                            .appearMotion(visible: appear, index: 3)
-                        historyList
-                            .appearMotion(visible: appear, index: 4)
-                    }
-                    .padding(20)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    periodPicker
+                        .appearMotion(visible: appear, index: 0)
+                    summaryRow
+                        .appearMotion(visible: appear, index: 1)
+                    chartCard
+                        .appearMotion(visible: appear, index: 2)
+                    comparisonCard
+                        .appearMotion(visible: appear, index: 3)
+                    historyList
+                        .appearMotion(visible: appear, index: 4)
                 }
+                .padding(20)
+                .padding(.bottom, 16)
             }
+            .background { LiquidGlassBackground() }
             .navigationTitle("Consumo")
+            .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }

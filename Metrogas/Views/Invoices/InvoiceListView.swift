@@ -6,79 +6,82 @@ struct InvoiceListView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                LiquidGlassBackground()
-
-                VStack(spacing: 0) {
-                    filterBar
-                        .padding(.horizontal, 16)
-                        .padding(.top, 8)
-                        .padding(.bottom, 12)
-                        .appearMotion(visible: appear, index: 0)
-
-                    if store.isLoading && store.invoices.isEmpty {
-                        ProgressView("Cargando facturas…")
-                            .padding(20)
-                            .liquidGlass(cornerRadius: 20)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if store.filteredInvoices.isEmpty {
-                        emptyState
-                            .appearMotion(visible: appear, index: 1)
-                    } else {
-                        List {
-                            ForEach(Array(store.filteredInvoices.enumerated()), id: \.element.id) { index, invoice in
-                                NavigationLink {
-                                    InvoiceDetailView(invoiceID: invoice.id)
-                                } label: {
-                                    InvoiceRowView(invoice: invoice)
-                                }
-                                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-                                .listRowBackground(
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .fill(.ultraThinMaterial)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                                .strokeBorder(
-                                                    LinearGradient(
-                                                        colors: [
-                                                            Color.white.opacity(0.55),
-                                                            Color.white.opacity(0.12),
-                                                            Color.white.opacity(0.3)
-                                                        ],
-                                                        startPoint: .topLeading,
-                                                        endPoint: .bottomTrailing
-                                                    ),
-                                                    lineWidth: 1
-                                                )
-                                        )
-                                        .shadow(color: Color.black.opacity(0.06), radius: 10, y: 4)
-                                        .padding(.vertical, 4)
-                                )
-                                .listRowSeparator(.hidden)
-                                .appearMotion(visible: appear, index: min(index + 1, 6))
-                            }
-                        }
-                        .listStyle(.plain)
-                        .scrollContentBackground(.hidden)
-                    }
+            Group {
+                if store.isLoading && store.invoices.isEmpty {
+                    ProgressView("Cargando facturas…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if store.invoices.isEmpty {
+                    emptyState(noData: true)
+                } else {
+                    invoiceList
                 }
             }
+            .background { LiquidGlassBackground() }
             .navigationTitle("Facturas")
+            .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .searchable(text: $store.searchText, prompt: "Buscar por número o período")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Image("MetrogasLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(height: 18)
-                        .accessibilityHidden(true)
-                }
-            }
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }
             }
         }
+    }
+
+    private var invoiceList: some View {
+        List {
+            Section {
+                filterBar
+            }
+            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+
+            if store.filteredInvoices.isEmpty {
+                Section {
+                    emptyState(noData: false)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+            } else {
+                Section {
+                    ForEach(Array(store.filteredInvoices.enumerated()), id: \.element.id) { index, invoice in
+                        NavigationLink {
+                            InvoiceDetailView(invoiceID: invoice.id)
+                        } label: {
+                            InvoiceRowView(invoice: invoice)
+                        }
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .listRowBackground(
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                        .strokeBorder(
+                                            LinearGradient(
+                                                colors: [
+                                                    Color.white.opacity(0.55),
+                                                    Color.white.opacity(0.12),
+                                                    Color.white.opacity(0.28)
+                                                ],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            ),
+                                            lineWidth: 1
+                                        )
+                                )
+                                .shadow(color: Color.black.opacity(0.06), radius: 12, y: 5)
+                                .padding(.vertical, 3)
+                        )
+                        .listRowSeparator(.hidden)
+                        .appearMotion(visible: appear, index: min(index + 1, 8))
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .listSectionSpacing(8)
     }
 
     private var filterBar: some View {
@@ -96,15 +99,15 @@ struct InvoiceListView: View {
         }
     }
 
-    private var emptyState: some View {
+    private func emptyState(noData: Bool) -> some View {
         ContentUnavailableView {
             Label(
-                store.invoices.isEmpty ? "Sin facturas" : "Sin resultados",
-                systemImage: store.invoices.isEmpty ? "doc.text" : "doc.text.magnifyingglass"
+                noData ? "Sin facturas" : "Sin resultados",
+                systemImage: noData ? "doc.text" : "doc.text.magnifyingglass"
             )
         } description: {
             Text(
-                store.invoices.isEmpty
+                noData
                     ? (store.isLoading
                         ? "Estamos cargando las facturas de tu Oficina Virtual…"
                         : "Las facturas aparecen cuando sincronizás al iniciar sesión.")
@@ -113,7 +116,7 @@ struct InvoiceListView: View {
         }
         .padding(24)
         .liquidGlass(cornerRadius: 24)
-        .padding(.horizontal, 20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        .appearMotion(visible: appear, index: 1)
     }
 }

@@ -40,25 +40,23 @@ struct InvoiceDetailView: View {
 
     @ViewBuilder
     private func content(for invoice: Invoice) -> some View {
-        ZStack {
-            LiquidGlassBackground()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    header(invoice)
-                        .appearMotion(visible: appear, index: 0)
-                    detailsCard(invoice)
-                        .appearMotion(visible: appear, index: 1)
-                    breakdownCard(invoice)
-                        .appearMotion(visible: appear, index: 2)
-                    notesCard(invoice)
-                        .appearMotion(visible: appear, index: 3)
-                    actions(invoice)
-                        .appearMotion(visible: appear, index: 4)
-                }
-                .padding(20)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                header(invoice)
+                    .appearMotion(visible: appear, index: 0)
+                detailsCard(invoice)
+                    .appearMotion(visible: appear, index: 1)
+                breakdownCard(invoice)
+                    .appearMotion(visible: appear, index: 2)
+                notesCard(invoice)
+                    .appearMotion(visible: appear, index: 3)
+                actions(invoice)
+                    .appearMotion(visible: appear, index: 4)
             }
+            .padding(20)
+            .padding(.bottom, 16)
         }
+        .background { LiquidGlassBackground() }
     }
 
     private func header(_ invoice: Invoice) -> some View {

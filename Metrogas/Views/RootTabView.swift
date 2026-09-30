@@ -28,29 +28,34 @@ struct RootTabView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Group {
-                switch selected {
-                case .home:
-                    HomeView()
-                case .invoices:
-                    InvoiceListView()
-                case .consumption:
-                    ConsumptionView()
-                case .account:
-                    AccountView()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                Color.clear.frame(height: 72)
-            }
+            tabContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             glassTabBar
                 .padding(.horizontal, 20)
                 .padding(.bottom, 10)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
         }
         .animation(MetrogasTheme.springSoft, value: selected)
+    }
+
+    @ViewBuilder
+    private var tabContent: some View {
+        Group {
+            switch selected {
+            case .home:
+                HomeView()
+            case .invoices:
+                InvoiceListView()
+            case .consumption:
+                ConsumptionView()
+            case .account:
+                AccountView()
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // Reserva espacio real para el tab bar flotante sin tapar el scroll.
+            Color.clear.frame(height: 78)
+        }
     }
 
     private var glassTabBar: some View {
