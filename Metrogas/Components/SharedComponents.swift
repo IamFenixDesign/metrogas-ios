@@ -2,6 +2,7 @@ import SwiftUI
 
 struct StatusBadge: View {
     let status: InvoiceStatus
+    var compact: Bool = false
 
     private var tint: Color {
         switch status {
@@ -12,20 +13,26 @@ struct StatusBadge: View {
     }
 
     var body: some View {
-        Text(status.rawValue)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(tint)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background {
-                Capsule(style: .continuous)
-                    .fill(tint.opacity(0.16))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .strokeBorder(tint.opacity(0.28), lineWidth: 0.8)
-                    )
+        HStack(spacing: 4) {
+            Image(systemName: status.symbolName)
+                .font(compact ? .caption2.weight(.bold) : .caption.weight(.semibold))
+            if !compact {
+                Text(status.rawValue)
+                    .font(.caption.weight(.semibold))
             }
-            .accessibilityLabel("Estado: \(status.rawValue)")
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, compact ? 7 : 10)
+        .padding(.vertical, compact ? 4 : 5)
+        .background {
+            Capsule(style: .continuous)
+                .fill(tint.opacity(0.16))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(tint.opacity(0.28), lineWidth: 0.8)
+                )
+        }
+        .accessibilityLabel("Estado: \(status.rawValue)")
     }
 }
 
@@ -77,33 +84,40 @@ struct MetricTile: View {
 
 struct GlassChip: View {
     let title: String
+    var icon: String? = nil
     var selected: Bool = false
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background {
-                    Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .overlay {
-                            if selected {
-                                Capsule(style: .continuous)
-                                    .fill(MetrogasTheme.brandBlue.opacity(0.92))
-                            }
-                        }
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .strokeBorder(
-                                    selected ? Color.white.opacity(0.35) : Color.white.opacity(0.45),
-                                    lineWidth: 1
-                                )
-                        )
+            HStack(spacing: 5) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.caption.weight(.semibold))
                 }
-                .foregroundStyle(selected ? .white : .primary)
+                Text(title)
+                    .font(.caption.weight(.semibold))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay {
+                        if selected {
+                            Capsule(style: .continuous)
+                                .fill(MetrogasTheme.brandBlue.opacity(0.92))
+                        }
+                    }
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(
+                                selected ? Color.white.opacity(0.35) : Color.white.opacity(0.45),
+                                lineWidth: 1
+                            )
+                    )
+            }
+            .foregroundStyle(selected ? .white : .primary)
         }
         .buttonStyle(.plain)
         .animation(MetrogasTheme.springSnappy, value: selected)
