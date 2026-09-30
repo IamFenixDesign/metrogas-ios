@@ -18,7 +18,6 @@ final class AppSession: ObservableObject {
 
     @Published var isLoggingIn = false
     @Published var loginError: String?
-    @Published var isRestoringSession = false
 
     private var googleFlowActive = false
     private var didBootstrapSession = false
@@ -132,15 +131,10 @@ final class AppSession: ObservableObject {
 
     /// Al abrir la app con sesión ya marcada: restaura cookies, revalida y deja lista la sync.
     /// Devuelve `true` si la sesión quedó usable para sincronizar datos.
+    /// No bloquea la UI: corre en background tras el splash corto.
     @discardableResult
     func restoreSessionIfNeeded() async -> Bool {
         guard isAuthenticated else { return false }
-        if didBootstrapSession {
-            // Igual revalidamos por si las cookies vencieron en background.
-        }
-
-        isRestoringSession = true
-        defer { isRestoringSession = false }
 
         // 1) Cookies de un login Google previo pueden estar en WK.
         await WebCookieBridge.syncWebKitCookiesToHTTP()
