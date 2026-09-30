@@ -4,9 +4,9 @@ struct UpcomingDueSection: View {
     @EnvironmentObject private var store: AccountDataStore
 
     var body: some View {
-        let items = store.upcomingDueInvoices
+        let items = Array(store.upcomingDueInvoices.prefix(2))
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(
                     title: "Próximos vencimientos",
                     subtitle: "Facturas a pagar"
