@@ -13,6 +13,13 @@ struct AccountView: View {
         NavigationStack {
             List {
                 Section {
+                    TabBarScrollProbe()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+
+                Section {
                     VStack(spacing: 16) {
                         MetrogasLogo(height: 32, alignment: .center)
                             .frame(maxWidth: 160)

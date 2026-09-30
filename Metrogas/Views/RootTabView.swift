@@ -45,9 +45,11 @@ struct RootTabView: View {
             .environmentObject(tabScroll)
 
             glassTabBar
-                .padding(.horizontal, tabScroll.isCompact ? 36 : 20)
-                .padding(.bottom, tabScroll.isCompact ? 4 : 8)
-                .offset(y: tabScroll.isCompact ? 10 : 0)
+                .padding(.horizontal, tabScroll.isCompact ? 48 : 20)
+                .padding(.bottom, tabScroll.isCompact ? 2 : 8)
+                .scaleEffect(tabScroll.isCompact ? 0.92 : 1, anchor: .bottom)
+                .offset(y: tabScroll.isCompact ? 28 : 0)
+                .opacity(tabScroll.isCompact ? 0.92 : 1)
                 .allowsHitTesting(true)
         }
         .animation(MetrogasTheme.springSoft, value: selected)
@@ -73,6 +75,7 @@ struct RootTabView: View {
         return Button {
             withAnimation(MetrogasTheme.springBouncy) {
                 selected = tab
+                tabScroll.reset()
             }
         } label: {
             VStack(spacing: tabScroll.isCompact ? 0 : 4) {

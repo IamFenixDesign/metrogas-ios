@@ -1,127 +1,85 @@
 import SwiftUI
-import UIKit
 
 /// Controla si el tab bar flotante se muestra compacto al scrollear.
 @MainActor
 final class TabBarScrollState: ObservableObject {
-    @Published var isCompact = false
+    @Published private(set) var isCompact = false
 
     private var lastOffset: CGFloat = 0
-    private var accumulated: CGFloat = 0
+    private var hasBaseline = false
+    private var baselineMinY: CGFloat = 0
 
     func reset() {
         isCompact = false
         lastOffset = 0
-        accumulated = 0
+        hasBaseline = false
+        baselineMinY = 0
     }
 
-    func handleScroll(offsetY: CGFloat) {
-        let delta = offsetY - lastOffset
-        lastOffset = offsetY
-
-        // Cerca del tope: siempre expandida.
-        if offsetY <= 8 {
-            if isCompact {
-                withAnimation(MetrogasTheme.springSnappy) { isCompact = false }
-            }
-            accumulated = 0
+    /// `minY` global del probe al tope del contenido scrolleable.
+    func handleProbeMinY(_ minY: CGFloat) {
+        if !hasBaseline {
+            baselineMinY = minY
+            hasBaseline = true
+            lastOffset = 0
             return
         }
 
-        // Ignorar micro-movimientos.
-        guard abs(delta) > 0.5 else { return }
+        // Al scrollear hacia abajo el probe sube (minY baja) → offset positivo.
+        let offset = max(0, baselineMinY - minY)
+        apply(offset: offset)
+    }
 
-        if delta * accumulated < 0 {
-            accumulated = 0
+    private func apply(offset: CGFloat) {
+        let delta = offset - lastOffset
+        lastOffset = offset
+
+        if offset <= 12 {
+            setCompact(false)
+            return
         }
-        accumulated += delta
 
-        if accumulated > 24, !isCompact {
-            withAnimation(MetrogasTheme.springSnappy) { isCompact = true }
-            accumulated = 0
-        } else if accumulated < -18, isCompact {
-            withAnimation(MetrogasTheme.springSnappy) { isCompact = false }
-            accumulated = 0
+        guard abs(delta) > 1 else { return }
+
+        if delta > 6 {
+            setCompact(true)
+        } else if delta < -4 {
+            setCompact(false)
+        }
+    }
+
+    private func setCompact(_ value: Bool) {
+        guard isCompact != value else { return }
+        withAnimation(MetrogasTheme.springSnappy) {
+            isCompact = value
         }
     }
 }
 
-/// Observa el UIScrollView contenedor (ScrollView o List) y reporta el offset.
-struct ScrollOffsetReader: UIViewRepresentable {
-    let onOffsetChange: (CGFloat) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onOffsetChange: onOffsetChange)
-    }
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
-        view.isUserInteractionEnabled = false
-        view.backgroundColor = .clear
-        return view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.onOffsetChange = onOffsetChange
-        DispatchQueue.main.async {
-            context.coordinator.attach(to: uiView)
-        }
-    }
-
-    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
-        coordinator.detach()
-    }
-
-    final class Coordinator: NSObject {
-        var onOffsetChange: (CGFloat) -> Void
-        private weak var scrollView: UIScrollView?
-        private var observation: NSKeyValueObservation?
-
-        init(onOffsetChange: @escaping (CGFloat) -> Void) {
-            self.onOffsetChange = onOffsetChange
-        }
-
-        func attach(to view: UIView) {
-            guard let scroll = view.enclosingScrollView() else { return }
-            if scrollView === scroll, observation != nil { return }
-            detach()
-            scrollView = scroll
-            observation = scroll.observe(\.contentOffset, options: [.new]) { [weak self] scrollView, _ in
-                let y = max(0, scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
-                DispatchQueue.main.async {
-                    self?.onOffsetChange(y)
-                }
-            }
-        }
-
-        func detach() {
-            observation?.invalidate()
-            observation = nil
-            scrollView = nil
-        }
+private struct TabBarScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
-private extension UIView {
-    func enclosingScrollView() -> UIScrollView? {
-        var current: UIView? = self
-        while let view = current {
-            if let scroll = view as? UIScrollView {
-                return scroll
-            }
-            current = view.superview
+/// Probe de 0 altura al inicio del contenido; reporta su minY global.
+struct TabBarScrollProbe: View {
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear
+                .preference(key: TabBarScrollOffsetKey.self, value: geo.frame(in: .global).minY)
         }
-        return nil
+        .frame(height: 0)
+        .accessibilityHidden(true)
     }
 }
 
 extension View {
-    /// Engancha el scroll de esta pantalla al tab bar compactable.
+    /// Escucha el probe y actualiza el tab bar.
     func tracksFloatingTabBar(_ state: TabBarScrollState) -> some View {
-        background {
-            ScrollOffsetReader { offset in
-                state.handleScroll(offsetY: offset)
-            }
+        onPreferenceChange(TabBarScrollOffsetKey.self) { minY in
+            state.handleProbeMinY(minY)
         }
     }
 }
