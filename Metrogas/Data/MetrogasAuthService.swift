@@ -253,6 +253,18 @@ actor MetrogasAuthService {
         cookieJar.cookies?.forEach(cookieJar.deleteCookie)
     }
 
+    /// Cierra la sesión MetroGAS/SAP pero conserva cookies de Google para reingresar sin contraseña.
+    func clearMetrogasSessionCookiesKeepingGoogle() {
+        guard let cookies = cookieJar.cookies else { return }
+        for cookie in cookies {
+            let domain = cookie.domain.lowercased()
+            if domain.contains("google.") || domain.contains(".google.com") {
+                continue
+            }
+            cookieJar.deleteCookie(cookie)
+        }
+    }
+
     // MARK: - Bootstrap SAML → IDS login HTML
 
     @discardableResult
