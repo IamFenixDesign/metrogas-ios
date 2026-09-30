@@ -14,6 +14,20 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "F10000000000000000000007"
+               BuildableName = "MetrogasWidgets.appex"
+               BlueprintName = "MetrogasWidgets"
+               ReferencedContainer = "container:Metrogas.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "F10000000000000000000001"
                BuildableName = "Metrogas.app"
                BlueprintName = "Metrogas"
