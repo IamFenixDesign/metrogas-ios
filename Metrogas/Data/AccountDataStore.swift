@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import WidgetKit
 
 @MainActor
 final class AccountDataStore: ObservableObject {
@@ -157,6 +158,8 @@ final class AccountDataStore: ObservableObject {
             didSyncThisSession = false
             UserDefaults.standard.removeObject(forKey: Keys.cache)
             UserDefaults.standard.removeObject(forKey: Keys.lastSync)
+            WidgetSnapshotStore.clear()
+            WidgetCenter.shared.reloadAllTimelines()
         }
 
         account.email = trimmed
@@ -315,6 +318,8 @@ final class AccountDataStore: ObservableObject {
         didSyncThisSession = false
         UserDefaults.standard.removeObject(forKey: Keys.cache)
         UserDefaults.standard.removeObject(forKey: Keys.lastSync)
+        WidgetSnapshotStore.clear()
+        WidgetCenter.shared.reloadAllTimelines()
         // No conservar N° de cliente en memoria: el vínculo queda por email en LinkedAccountStore.
     }
 
@@ -326,6 +331,7 @@ final class AccountDataStore: ObservableObject {
         if let normalized = MetrogasURLs.normalizedCustomerNumber(account.customerNumber) {
             LinkedAccountStore.bind(email: account.email, customerNumber: normalized)
         }
+        publishWidgetSnapshot()
     }
 
     private func loadCache() {
@@ -337,6 +343,28 @@ final class AccountDataStore: ObservableObject {
             customerNumberDraft = MetrogasURLs.normalizedCustomerNumber(payload.account.customerNumber) ?? ""
         }
         lastSync = UserDefaults.standard.object(forKey: Keys.lastSync) as? Date
+        publishWidgetSnapshot()
+    }
+
+    private func publishWidgetSnapshot() {
+        let items = invoices
+            .sorted { $0.issuedDate > $1.issuedDate }
+            .prefix(10)
+            .map { invoice in
+                WidgetSnapshotStore.Item(
+                    id: invoice.id,
+                    number: invoice.number,
+                    periodLabel: invoice.periodLabel,
+                    amountText: Formatters.money(invoice.amountARS),
+                    statusLabel: invoice.status.rawValue,
+                    dueDateText: DateFormatter.metrogasDayMonthYear.string(from: invoice.dueDate),
+                    issuedAt: invoice.issuedDate
+                )
+            }
+        WidgetSnapshotStore.save(
+            WidgetSnapshotStore.Snapshot(updatedAt: Date(), items: Array(items))
+        )
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private struct CachePayload: Codable {
