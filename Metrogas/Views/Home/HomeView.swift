@@ -6,49 +6,48 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                LiquidGlassBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    brandHero
+                        .appearMotion(visible: appear, index: 0)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        brandHero
-                            .appearMotion(visible: appear, index: 0)
-
-                        if store.isLoading {
-                            ProgressView("Sincronizando tu cuenta…")
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .padding(.horizontal, 16)
-                                .liquidGlass(cornerRadius: 18)
-                                .appearMotion(visible: appear, index: 1)
-                        }
-
-                        if let message = store.syncMessage {
-                            Text(message)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .padding(14)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .liquidGlass(cornerRadius: 18)
-                                .appearMotion(visible: appear, index: 1)
-                        }
-
-                        nextInvoiceCard
-                            .appearMotion(visible: appear, index: 2)
-
-                        UpcomingDueSection()
-                            .appearMotion(visible: appear, index: 3)
-
-                        quickMetrics
-                            .appearMotion(visible: appear, index: 4)
-
-                        recentActivity
-                            .appearMotion(visible: appear, index: 5)
+                    if store.isLoading {
+                        ProgressView("Sincronizando tu cuenta…")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 16)
+                            .liquidGlass(cornerRadius: 18)
+                            .appearMotion(visible: appear, index: 1)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 28)
+
+                    if let message = store.syncMessage {
+                        Text(message)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .liquidGlass(cornerRadius: 18)
+                            .appearMotion(visible: appear, index: 1)
+                    }
+
+                    nextInvoiceCard
+                        .appearMotion(visible: appear, index: 2)
+
+                    UpcomingDueSection()
+                        .appearMotion(visible: appear, index: 3)
+
+                    quickMetrics
+                        .appearMotion(visible: appear, index: 4)
+
+                    recentActivity
+                        .appearMotion(visible: appear, index: 5)
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 36)
             }
+            .scrollIndicators(.automatic)
+            .background { LiquidGlassBackground() }
             .navigationTitle("Inicio")
             .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
@@ -59,10 +58,7 @@ struct HomeView: View {
     }
 
     private var brandHero: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            MetrogasLogo(height: 30, alignment: .leading)
-                .frame(maxWidth: 140, alignment: .leading)
-
+        VStack(alignment: .leading, spacing: 6) {
             Text("Tu gas natural en un vistazo")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
@@ -72,7 +68,6 @@ struct HomeView: View {
                 .font(.system(.title2, design: .rounded).weight(.semibold))
                 .foregroundStyle(.primary)
         }
-        .padding(.top, 4)
         .accessibilityElement(children: .combine)
     }
 
@@ -155,21 +150,6 @@ struct HomeView: View {
                 }
             }
             .buttonStyle(PressableGlassStyle())
-        } else if !store.isLoading {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(store.invoices.isEmpty ? "Sin facturas todavía" : "Estás al día")
-                    .font(.headline)
-                Text(
-                    store.invoices.isEmpty
-                        ? "Cuando haya datos de tu Oficina Virtual, vas a ver el próximo vencimiento acá."
-                        : "No hay facturas pendientes en este momento."
-                )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .liquidGlass(cornerRadius: 22)
         }
     }
 

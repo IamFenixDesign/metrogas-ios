@@ -10,126 +10,138 @@ struct AccountView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                LiquidGlassBackground()
+            List {
+                Section {
+                    VStack(spacing: 16) {
+                        MetrogasLogo(height: 32, alignment: .center)
+                            .frame(maxWidth: 160)
+                        profileHeader
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 12, leading: 0, bottom: 16, trailing: 0))
+                    .appearMotion(visible: appear, index: 0)
+                }
 
-                List {
+                if store.needsCustomerNumber {
                     Section {
-                        VStack(spacing: 14) {
-                            MetrogasLogo(height: 32, alignment: .center)
-                                .frame(maxWidth: 160)
-                            profileHeader
+                        TextField("11 dígitos", text: $store.customerNumberDraft)
+                            .keyboardType(.numberPad)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.body.monospacedDigit())
+                        if let customerNumberError {
+                            Text(customerNumberError)
+                                .font(.caption)
+                                .foregroundStyle(MetrogasTheme.brandFlame)
                         }
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                        .appearMotion(visible: appear, index: 0)
-                    }
-
-                    if store.needsCustomerNumber {
-                        Section {
-                            TextField("11 dígitos", text: $store.customerNumberDraft)
-                                .keyboardType(.numberPad)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .font(.body.monospacedDigit())
-                            if let customerNumberError {
-                                Text(customerNumberError)
-                                    .font(.caption)
-                                    .foregroundStyle(MetrogasTheme.brandFlame)
+                        Button("Vincular a esta cuenta") {
+                            if store.saveCustomerNumber(store.customerNumberDraft, forEmail: session.loginEmail) {
+                                customerNumberError = nil
+                                Task { await store.refresh(loginHint: session.loginEmail, force: true) }
+                            } else {
+                                customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
                             }
-                            Button("Vincular a esta cuenta") {
-                                if store.saveCustomerNumber(store.customerNumberDraft, forEmail: session.loginEmail) {
-                                    customerNumberError = nil
-                                    Task { await store.refresh(loginHint: session.loginEmail, force: true) }
-                                } else {
-                                    customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
-                                }
-                            }
-                            .disabled(store.isLoading)
-                        } header: {
-                            Text("Respaldo N° de cliente")
-                        } footer: {
-                            Text("Solo si tu usuario Google/MetroGAS todavía no tiene N° asociado. Queda vinculado a esta cuenta para las próximas veces.")
                         }
-                        .listRowBackground(glassListRow)
-                    }
-
-                    Section("Suministro") {
-                        labeled("N° de cliente", store.account.customerNumber)
-                        labeled("Medidor", store.account.meterNumber)
-                        labeled("Categoría", store.account.tariffCategory)
-                        labeled("Dirección", store.account.supplyAddress)
-                        labeled("Localidad", store.account.locality)
-                        labeled("CP", store.account.postalCode)
+                        .disabled(store.isLoading)
+                    } header: {
+                        Text("Respaldo N° de cliente")
+                    } footer: {
+                        Text("Solo si tu usuario Google/MetroGAS todavía no tiene N° asociado. Queda vinculado a esta cuenta para las próximas veces.")
                     }
                     .listRowBackground(glassListRow)
+                    .listRowInsets(sectionRowInsets)
+                }
 
-                    Section("Contacto") {
-                        labeled("Email", displayEmail)
-                        labeled("Teléfono", store.account.phone)
-                    }
-                    .listRowBackground(glassListRow)
+                Section("Suministro") {
+                    labeled("N° de cliente", store.account.customerNumber)
+                    labeled("Medidor", store.account.meterNumber)
+                    labeled("Categoría", store.account.tariffCategory)
+                    labeled("Dirección", store.account.supplyAddress)
+                    labeled("Localidad", store.account.locality)
+                    labeled("CP", store.account.postalCode)
+                }
+                .listRowBackground(glassListRow)
+                .listRowInsets(sectionRowInsets)
 
-                    Section {
-                        Toggle("Recordatorios de vencimiento", isOn: $reminders.remindersEnabled)
-                            .onChange(of: reminders.remindersEnabled) { _, _ in
-                                Task { await reminders.reschedule(for: store.invoices) }
-                            }
+                Section("Contacto") {
+                    labeled("Email", displayEmail)
+                    labeled("Teléfono", store.account.phone)
+                }
+                .listRowBackground(glassListRow)
+                .listRowInsets(sectionRowInsets)
 
-                        Stepper(
-                            "Avisar \(reminders.daysBeforeDue) día\(reminders.daysBeforeDue == 1 ? "" : "s") antes",
-                            value: $reminders.daysBeforeDue,
-                            in: 1...7
-                        )
-                        .disabled(!reminders.remindersEnabled)
-                        .onChange(of: reminders.daysBeforeDue) { _, _ in
+                Section {
+                    Toggle("Recordatorios de vencimiento", isOn: $reminders.remindersEnabled)
+                        .padding(.vertical, 4)
+                        .onChange(of: reminders.remindersEnabled) { _, _ in
                             Task { await reminders.reschedule(for: store.invoices) }
                         }
-                    } header: {
-                        Text("Recordatorios")
-                    } footer: {
-                        if reminders.authorizationStatus == .denied {
-                            Text("Las notificaciones están desactivadas. Activalas en Ajustes → Metrogas → Notificaciones.")
-                        } else {
-                            Text("Avisos nativos de iOS según tus facturas sincronizadas.")
-                        }
-                    }
-                    .listRowBackground(glassListRow)
 
-                    Section("Preferencias") {
-                        Picker("Apariencia", selection: $session.appearanceMode) {
-                            ForEach(AppSession.AppearanceMode.allCases) { mode in
-                                Text(mode.rawValue).tag(mode)
-                            }
-                        }
-                        .onChange(of: session.appearanceMode) { _, _ in
-                            session.persistAppearance()
-                        }
-
-                        if store.isLoading {
-                            Label("Sincronizando con tu cuenta…", systemImage: "arrow.triangle.2.circlepath")
-                                .foregroundStyle(.secondary)
-                                .symbolEffect(.pulse, options: .repeating.speed(0.6), isActive: store.isLoading)
-                        } else if let last = store.lastSync {
-                            Text("Última sync: \(DateFormatter.metrogasDayMonthYear.string(from: last))")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
+                    Stepper(
+                        "Avisar \(reminders.daysBeforeDue) día\(reminders.daysBeforeDue == 1 ? "" : "s") antes",
+                        value: $reminders.daysBeforeDue,
+                        in: 1...7
+                    )
+                    .padding(.vertical, 4)
+                    .disabled(!reminders.remindersEnabled)
+                    .onChange(of: reminders.daysBeforeDue) { _, _ in
+                        Task { await reminders.reschedule(for: store.invoices) }
                     }
-                    .listRowBackground(glassListRow)
-
-                    Section {
-                        Button("Cerrar sesión", role: .destructive) {
-                            showLogoutConfirm = true
-                        }
-                    } footer: {
-                        Text("Al cerrar sesión se borran cookies y datos sincronizados de este dispositivo.")
+                } header: {
+                    Text("Recordatorios")
+                } footer: {
+                    if reminders.authorizationStatus == .denied {
+                        Text("Las notificaciones están desactivadas. Activalas en Ajustes → Metrogas → Notificaciones.")
+                    } else {
+                        Text("Avisos nativos de iOS según tus facturas sincronizadas.")
                     }
-                    .listRowBackground(glassListRow)
                 }
-                .scrollContentBackground(.hidden)
+                .listRowBackground(glassListRow)
+                .listRowInsets(sectionRowInsets)
+
+                Section("Preferencias") {
+                    Picker("Apariencia", selection: $session.appearanceMode) {
+                        ForEach(AppSession.AppearanceMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .onChange(of: session.appearanceMode) { _, _ in
+                        session.persistAppearance()
+                    }
+
+                    if store.isLoading {
+                        Label("Sincronizando con tu cuenta…", systemImage: "arrow.triangle.2.circlepath")
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 4)
+                            .symbolEffect(.pulse, options: .repeating.speed(0.6), isActive: store.isLoading)
+                    } else if let last = store.lastSync {
+                        Text("Última sync: \(DateFormatter.metrogasDayMonthYear.string(from: last))")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 4)
+                    }
+                }
+                .listRowBackground(glassListRow)
+                .listRowInsets(sectionRowInsets)
+
+                Section {
+                    Button("Cerrar sesión", role: .destructive) {
+                        showLogoutConfirm = true
+                    }
+                    .padding(.vertical, 6)
+                } footer: {
+                    Text("Al cerrar sesión se borran cookies y datos sincronizados de este dispositivo.")
+                }
+                .listRowBackground(glassListRow)
+                .listRowInsets(sectionRowInsets)
             }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .listSectionSpacing(28)
+            .background { LiquidGlassBackground() }
             .navigationTitle("Cuenta")
+            .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .task {
                 await reminders.refreshAuthorizationStatus()
@@ -151,14 +163,18 @@ struct AccountView: View {
         }
     }
 
+    private var sectionRowInsets: EdgeInsets {
+        EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
+    }
+
     private var glassListRow: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
             .fill(.ultraThinMaterial)
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.8)
             )
-            .padding(.vertical, 2)
+            .padding(.vertical, 4)
     }
 
     private var displayEmail: String {
@@ -214,13 +230,14 @@ struct AccountView: View {
     }
 
     private func labeled(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.body.weight(.medium))
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
