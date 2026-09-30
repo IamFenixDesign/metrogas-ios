@@ -9,7 +9,7 @@ enum LinkedAccountStore {
     private static let globalCustomerKey = "metrogas.account.customerNumber"
     private static let schemaKey = "metrogas.linkedCustomer.schemaVersion"
     /// Subir esto limpia vínculos viejos/envenenados una vez por dispositivo.
-    private static let currentSchema = 3
+    private static let currentSchema = 4
 
     /// Migración: borra vínculos previos al esquema actual (scrapes / fast-path erróneos).
     static func migrateIfNeeded() {
