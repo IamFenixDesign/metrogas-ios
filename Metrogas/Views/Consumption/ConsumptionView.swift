@@ -27,8 +27,6 @@ struct ConsumptionView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Consumo")
             .navigationBarTitleDisplayMode(.large)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }
             }
