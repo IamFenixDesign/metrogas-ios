@@ -44,7 +44,11 @@ struct InvoiceListView: View {
             .navigationBarTitleDisplayMode(.large)
             .searchable(text: $store.searchText, prompt: "Buscar N° o período")
             .refreshable {
-                await store.refresh(loginHint: session.loginEmail, force: true)
+                await store.refresh(
+                    loginHint: session.loginEmail,
+                    customerNumber: session.customerNumber,
+                    force: true
+                )
             }
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }

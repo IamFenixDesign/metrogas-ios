@@ -27,17 +27,15 @@ final class AccountDataStore: ObservableObject {
     init() {
         LinkedAccountStore.migrateIfNeeded()
         loadCache()
-        // Solo rehidratar N° confirmado ligado a ESTE email.
-        if !account.email.isEmpty,
-           let linked = LinkedAccountStore.customerNumber(forEmail: account.email) {
+        // Preferir N° ligado al email; si el login es solo por cliente, el global.
+        if let linked = LinkedAccountStore.customerNumber(forEmail: account.email.isEmpty ? nil : account.email)
+            ?? LinkedAccountStore.lastCustomerNumber()
+            ?? MetrogasURLs.normalizedCustomerNumber(account.customerNumber) {
             account.customerNumber = linked
             customerNumberDraft = linked
         } else {
             customerNumberDraft = ""
-            // Tras migración, la caché puede tener un N° ajeno: no mostrarlo.
-            if LinkedAccountStore.customerNumber(forEmail: account.email.isEmpty ? nil : account.email) == nil {
-                account.customerNumber = "—"
-            }
+            account.customerNumber = "—"
         }
         needsCustomerNumber = false
     }
@@ -97,6 +95,7 @@ final class AccountDataStore: ObservableObject {
             loginEmail: account.email.isEmpty ? nil : account.email,
             fallback: MetrogasURLs.normalizedCustomerNumber(account.customerNumber)
                 ?? MetrogasURLs.normalizedCustomerNumber(customerNumberDraft)
+                ?? LinkedAccountStore.lastCustomerNumber()
         )
     }
 
@@ -132,7 +131,11 @@ final class AccountDataStore: ObservableObject {
         }
         account.customerNumber = normalized
         customerNumberDraft = normalized
-        LinkedAccountStore.bind(email: email ?? account.email, customerNumber: normalized)
+        if let mail = email ?? (account.email.isEmpty ? nil : account.email) {
+            LinkedAccountStore.bind(email: mail, customerNumber: normalized)
+        } else {
+            LinkedAccountStore.bindCustomerOnly(normalized)
+        }
         needsCustomerNumber = false
         persistCache(bindCustomer: true)
         return true
@@ -208,13 +211,31 @@ final class AccountDataStore: ObservableObject {
             || trimmed.lowercased() == local.replacingOccurrences(of: "_", with: " ")
     }
 
-    /// Sync de cuenta/facturas/consumo.
-    /// `force: false` solo usa caché local. `force: true` consulta la red
-    /// (login, vincular N°, pull-to-refresh, o caché vacía al reabrir).
-    func refresh(loginHint: String? = nil, force: Bool = false) async {
-        guard !isLoading else { return }
+    /// Aplica el snapshot del login por N° de cliente (sin volver a pedir red).
+    func applyCustomerLoginSnapshot(_ snapshot: MetrogasDataSnapshot, customerNumber: String) {
+        guard let id = MetrogasURLs.normalizedCustomerNumber(customerNumber) else { return }
+        invoices = snapshot.invoices
+        readings = snapshot.readings.isEmpty && !snapshot.invoices.isEmpty
+            ? MetrogasJSONParser.deriveReadings(from: snapshot.invoices)
+            : snapshot.readings
+        account = snapshot.account
+        account.customerNumber = id
+        customerNumberDraft = id
+        needsCustomerNumber = false
+        needsReauthentication = false
+        syncMessage = invoices.isEmpty
+            ? "No encontramos facturas todavía. Deslizá hacia abajo para reintentar."
+            : nil
+        lastSync = Date()
+        UserDefaults.standard.set(lastSync, forKey: Keys.lastSync)
+        LinkedAccountStore.bindCustomerOnly(id)
+        persistCache(bindCustomer: true)
+    }
 
-        // Sin `force` no hay red: la info queda en caché local.
+    /// Sync de cuenta/facturas/consumo.
+    /// Con login por N° de cliente consulta M360 saldos (Tu Factura).
+    func refresh(loginHint: String? = nil, customerNumber: String? = nil, force: Bool = false) async {
+        guard !isLoading else { return }
         guard force else { return }
 
         isLoading = true
@@ -222,96 +243,35 @@ final class AccountDataStore: ObservableObject {
         needsCustomerNumber = false
         defer { isLoading = false }
 
-        // Email de login / Google. El N° solo viene de vínculo confirmado o discovery/M360.
-        let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
-        let emailHint: String? = {
-            if let loginHint, !loginHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return loginHint
-            }
-            if let email = identity.email, !email.isEmpty { return email }
-            return account.email.isEmpty ? nil : account.email
-        }()
-        if let emailHint { applyLoginHint(email: emailHint) }
+        let number = MetrogasURLs.normalizedCustomerNumber(customerNumber ?? "")
+            ?? MetrogasURLs.normalizedCustomerNumber(account.customerNumber)
+            ?? MetrogasURLs.normalizedCustomerNumber(customerNumberDraft)
+            ?? LinkedAccountStore.lastCustomerNumber()
 
-        let saved = CredentialStore.load()
-        do {
-            _ = try await MetrogasAuthService.shared.ensureActiveSession(
-                email: saved?.email ?? emailHint,
-                password: saved?.password
-            )
-        } catch MetrogasAuthError.sessionExpired {
-            syncMessage = MetrogasAuthError.sessionExpired.errorDescription
-            needsReauthentication = true
+        guard let number else {
+            needsCustomerNumber = true
+            syncMessage = "Ingresá tu N° de cliente de 11 dígitos para sincronizar."
             return
-        } catch MetrogasAuthError.invalidCredentials {
-            syncMessage = "Tu sesión venció. Volvé a ingresar."
-            needsReauthentication = true
-            return
-        } catch {
-            // Seguimos: cookies de Google/portal pueden seguir válidas.
         }
 
-        // Solo hint de orden (debe aparecer en candidatos del portal).
-        let linkedId = LinkedAccountStore.customerNumber(forEmail: emailHint)
-
         do {
-            let snapshot = try await MetrogasDataService.shared.fetchAccountData(
-                loginHint: emailHint,
-                preferredAccountId: linkedId
-            )
-
-            var nextAccount = snapshot.account
-            if let emailHint, !emailHint.isEmpty {
-                nextAccount.email = emailHint
-            }
-            if looksLikeFabricatedName(nextAccount.holderName, email: nextAccount.email) {
-                nextAccount.holderName = ""
-            }
-
-            let confirmedId = MetrogasURLs.normalizedCustomerNumber(nextAccount.customerNumber)
-            let hasFreshProfile = !nextAccount.holderName.isEmpty
-                || (!nextAccount.supplyAddress.isEmpty && nextAccount.supplyAddress != "—")
+            let snapshot = try await MetrogasDataService.shared.fetchByCustomerNumber(number)
+            let hasFreshProfile = !snapshot.account.holderName.isEmpty
+                || (!snapshot.account.supplyAddress.isEmpty && snapshot.account.supplyAddress != "—")
             let hasFreshInvoices = !snapshot.invoices.isEmpty
-            let syncLooksReal = confirmedId != nil && (hasFreshProfile || hasFreshInvoices)
 
-            if syncLooksReal, let confirmedId {
-                // Reemplazo duro: datos del portal de ESTA sesión.
-                invoices = []
-                readings = []
-                account = nextAccount
-                account.customerNumber = confirmedId
-                customerNumberDraft = confirmedId
-                invoices = snapshot.invoices
-                readings = snapshot.readings.isEmpty && !snapshot.invoices.isEmpty
-                    ? MetrogasJSONParser.deriveReadings(from: snapshot.invoices)
-                    : snapshot.readings
-                LinkedAccountStore.bind(email: emailHint ?? nextAccount.email, customerNumber: confirmedId)
-                needsCustomerNumber = false
-                syncMessage = invoices.isEmpty
-                    ? "No encontramos facturas todavía. Deslizá hacia abajo para reintentar."
-                    : nil
+            if hasFreshProfile || hasFreshInvoices {
+                applyCustomerLoginSnapshot(snapshot, customerNumber: number)
+                if let loginHint, !loginHint.isEmpty, account.email.isEmpty {
+                    account.email = loginHint
+                    persistCache(bindCustomer: true)
+                }
             } else {
-                // No mostrar N°/titular ajenos ni conservar vínculo dudoso.
-                LinkedAccountStore.unbind(email: emailHint)
-                invoices = []
-                readings = []
-                account.holderName = ""
-                account.customerNumber = "—"
-                account.supplyAddress = "—"
-                account.locality = "—"
-                account.postalCode = "—"
-                account.phone = "—"
-                account.meterNumber = "—"
-                account.tariffCategory = "—"
-                if let emailHint { account.email = emailHint }
-                customerNumberDraft = ""
+                account.customerNumber = number
+                customerNumberDraft = number
+                syncMessage = "No encontramos datos para ese N°. Revisalo en Cuenta."
                 needsCustomerNumber = true
-                syncMessage = "No pudimos asociar tu N° de cliente a esta sesión Google. Cargalo en Cuenta (11 dígitos de tu factura) una vez y queda vinculado."
             }
-
-            lastSync = Date()
-            UserDefaults.standard.set(lastSync, forKey: Keys.lastSync)
-            persistCache(bindCustomer: syncLooksReal)
         } catch {
             syncMessage = "No pudimos sincronizar con MetroGAS. Deslizá hacia abajo para reintentar."
         }

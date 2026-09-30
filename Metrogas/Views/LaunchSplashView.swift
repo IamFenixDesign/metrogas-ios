@@ -101,23 +101,16 @@ struct RootContainerView: View {
     }
 
     private func syncAfterLogin() async {
-        // Cookies + email Google/SAP antes de consultar M360.
-        await WebCookieBridge.syncWebKitCookiesToHTTP()
-        for _ in 0..<12 {
-            let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
-            if let email = identity.email, !email.isEmpty {
-                session.loginEmail = email
-                break
-            }
-            try? await Task.sleep(nanoseconds: 250_000_000)
+        if let snapshot = session.consumePendingLoginSnapshot(),
+           let id = session.customerNumber {
+            store.applyCustomerLoginSnapshot(snapshot, customerNumber: id)
+        } else {
+            await store.refresh(
+                loginHint: session.loginEmail,
+                customerNumber: session.customerNumber,
+                force: true
+            )
         }
-        for _ in 0..<10 {
-            if await MetrogasAuthService.shared.probePortalSession() { break }
-            await WebCookieBridge.syncWebKitCookiesToHTTP()
-            try? await Task.sleep(nanoseconds: 350_000_000)
-        }
-
-        await store.refresh(loginHint: session.loginEmail, force: true)
         await reminders.reschedule(for: store.invoices)
     }
 
@@ -127,12 +120,11 @@ struct RootContainerView: View {
         if session.isAuthenticated {
             let usable = await session.restoreSessionIfNeeded()
             if usable {
-                if session.loginEmail == nil || session.loginEmail?.isEmpty == true,
-                   let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
-                    session.loginEmail = email
-                }
-                // Tras fixes de detección, siempre revalidar con el portal al abrir sesión.
-                await store.refresh(loginHint: session.loginEmail, force: true)
+                await store.refresh(
+                    loginHint: session.loginEmail,
+                    customerNumber: session.customerNumber,
+                    force: true
+                )
                 await reminders.reschedule(for: store.invoices)
             }
         }

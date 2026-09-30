@@ -26,35 +26,40 @@ struct AccountView: View {
                     .appearMotion(visible: appear, index: 0)
                 }
 
-                if store.needsCustomerNumber {
-                    Section {
-                        TextField("11 dígitos", text: $store.customerNumberDraft)
-                            .keyboardType(.numberPad)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .font(.body.monospacedDigit())
-                        if let customerNumberError {
-                            Text(customerNumberError)
-                                .font(.caption)
-                                .foregroundStyle(MetrogasTheme.brandFlame)
-                        }
-                        Button("Vincular a esta cuenta") {
-                            if store.saveCustomerNumber(store.customerNumberDraft, forEmail: session.loginEmail) {
-                                customerNumberError = nil
-                                Task { await store.refresh(loginHint: session.loginEmail, force: true) }
-                            } else {
-                                customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
-                            }
-                        }
-                        .disabled(store.isLoading)
-                    } header: {
-                        Text("Respaldo N° de cliente")
-                    } footer: {
-                        Text("Solo si tu usuario Google/MetroGAS todavía no tiene N° asociado. Queda vinculado a esta cuenta para las próximas veces.")
+                Section {
+                    TextField("11 dígitos", text: $store.customerNumberDraft)
+                        .keyboardType(.numberPad)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.body.monospacedDigit())
+                    if let customerNumberError {
+                        Text(customerNumberError)
+                            .font(.caption)
+                            .foregroundStyle(MetrogasTheme.brandFlame)
                     }
-                    .listRowBackground(glassListRow)
-                    .listRowInsets(sectionRowInsets)
+                    Button("Actualizar datos de este N°") {
+                        if store.saveCustomerNumber(store.customerNumberDraft, forEmail: session.loginEmail) {
+                            customerNumberError = nil
+                            session.customerNumber = MetrogasURLs.normalizedCustomerNumber(store.customerNumberDraft)
+                            Task {
+                                await store.refresh(
+                                    loginHint: session.loginEmail,
+                                    customerNumber: session.customerNumber,
+                                    force: true
+                                )
+                            }
+                        } else {
+                            customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
+                        }
+                    }
+                    .disabled(store.isLoading)
+                } header: {
+                    Text("N° de cliente")
+                } footer: {
+                    Text("Podés cambiar el N° y volver a sincronizar facturas y titular desde MetroGAS.")
                 }
+                .listRowBackground(glassListRow)
+                .listRowInsets(sectionRowInsets)
 
                 Section("Suministro") {
                     labeled("N° de cliente", store.account.customerNumber)

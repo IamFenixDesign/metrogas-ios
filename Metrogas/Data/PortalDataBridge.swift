@@ -454,10 +454,14 @@ final class PortalDataBridge: NSObject {
       }
       function isAccountKey(k) {
         var lk = String(k || '').toLowerCase();
-        return lk.indexOf('account') !== -1 || lk.indexOf('cliente') !== -1
-          || lk.indexOf('cust') !== -1 || lk.indexOf('cuenta') !== -1
-          || lk.indexOf('contrato') !== -1 || lk === 'vkont'
-          || lk.indexOf('cta') !== -1 || lk.indexOf('nro_cliente') !== -1;
+        // Evitar claves vagas (account/cuenta) que metían N° de facturas ajenos.
+        return lk.indexOf('nro_cliente') !== -1 || lk.indexOf('nrocliente') !== -1
+          || lk.indexOf('numero_cliente') !== -1 || lk.indexOf('pve_nro') !== -1
+          || lk === 'vkont' || lk.indexOf('vkont') !== -1
+          || lk.indexOf('accountid') !== -1 || lk.indexOf('account_id') !== -1
+          || lk.indexOf('cta_contrato') !== -1 || lk.indexOf('ctacontrato') !== -1
+          || (lk.indexOf('cliente') !== -1 && lk.indexOf('mail') === -1 && lk.indexOf('email') === -1
+              && lk.indexOf('factura') === -1);
       }
       function walk(node, bag, depth, fromAccountKey) {
         if (!node || depth > 7) return;

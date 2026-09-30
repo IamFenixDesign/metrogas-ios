@@ -2,19 +2,23 @@ import SwiftUI
 
 struct LoginView: View {
     @EnvironmentObject private var session: AppSession
+    @EnvironmentObject private var store: AccountDataStore
 
-    @State private var email = ""
-    @State private var password = ""
+    @State private var customerNumber = ""
     @State private var appear = false
     @State private var showOtherAccountForm = false
-    @FocusState private var focusedField: Field?
+    @FocusState private var focusedField: Bool
 
-    private enum Field {
-        case email, password
+    private var showContinueCard: Bool {
+        session.canContinueWithCustomerNumber && !showOtherAccountForm
     }
 
-    private var showGoogleContinue: Bool {
-        session.canContinueWithGoogle && !showOtherAccountForm
+    private var digitsOnly: String {
+        customerNumber.filter(\.isNumber)
+    }
+
+    private var canSubmit: Bool {
+        MetrogasURLs.normalizedCustomerNumber(customerNumber) != nil && !session.isLoggingIn
     }
 
     var body: some View {
@@ -29,8 +33,8 @@ struct LoginView: View {
                         .appearMotion(visible: appear, index: 0)
 
                     Group {
-                        if showGoogleContinue {
-                            googleContinueCard
+                        if showContinueCard {
+                            continueCard
                         } else {
                             loginCard
                         }
@@ -46,24 +50,12 @@ struct LoginView: View {
             }
             .scrollDismissesKeyboard(.interactively)
         }
-        .sheet(isPresented: $session.showGoogleAuth) {
-            if let url = session.googleAuthURL {
-                GoogleAuthSheet(startURL: url)
-                    .environmentObject(session)
-                    .presentationDetents([.large])
-            }
-        }
         .onAppear {
-            if email.isEmpty, let saved = session.loginEmail {
-                email = saved
+            if customerNumber.isEmpty, let saved = session.rememberedCustomerNumber {
+                customerNumber = saved
             }
             showOtherAccountForm = false
             withAnimation(MetrogasTheme.springSoft) { appear = true }
-        }
-        .onChange(of: session.canContinueWithGoogle) { _, canContinue in
-            if canContinue {
-                showOtherAccountForm = false
-            }
         }
     }
 
@@ -81,9 +73,9 @@ struct LoginView: View {
                 .font(.system(size: 32, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
 
-            Text(showGoogleContinue
-                 ? "Tu cuenta de Google ya está lista para continuar."
-                 : "Ingresá con tu cuenta MetroGAS.")
+            Text(showContinueCard
+                 ? "Tu N° de cliente quedó listo para continuar."
+                 : "Ingresá con tu N° de cliente MetroGAS.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -91,25 +83,24 @@ struct LoginView: View {
         }
     }
 
-    /// Sección sin email/contraseña cuando Google ya estuvo iniciado.
-    private var googleContinueCard: some View {
+    private var continueCard: some View {
         VStack(spacing: 16) {
             HStack(spacing: 14) {
                 ZStack {
                     Circle()
                         .fill(MetrogasTheme.brandBlue.opacity(0.12))
                         .frame(width: 52, height: 52)
-                    Image(systemName: "g.circle.fill")
+                    Image(systemName: "number.circle.fill")
                         .font(.system(size: 30))
                         .foregroundStyle(MetrogasTheme.brandBlue)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Continuar con Google")
+                    Text("Continuar")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    Text(session.rememberedGoogleEmail ?? "")
-                        .font(.headline.weight(.semibold))
+                    Text(session.rememberedCustomerNumber ?? "")
+                        .font(.headline.monospacedDigit().weight(.semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -135,11 +126,11 @@ struct LoginView: View {
             }
 
             Button {
-                focusedField = nil
-                Task { await session.continueWithSavedGoogleAccount() }
+                focusedField = false
+                Task { await submitLogin(session.rememberedCustomerNumber ?? customerNumber) }
             } label: {
                 HStack {
-                    if session.isLoggingIn && !session.showGoogleAuth {
+                    if session.isLoggingIn {
                         ProgressView().tint(.white)
                     }
                     Text("Continuar")
@@ -167,11 +158,10 @@ struct LoginView: View {
                 withAnimation(MetrogasTheme.springSnappy) {
                     session.useAnotherAccount()
                     showOtherAccountForm = true
-                    email = ""
-                    password = ""
+                    customerNumber = ""
                 }
             } label: {
-                Text("Usar otra cuenta")
+                Text("Usar otro N° de cliente")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(MetrogasTheme.brandBlue)
                     .frame(maxWidth: .infinity)
@@ -185,25 +175,34 @@ struct LoginView: View {
 
     private var loginCard: some View {
         VStack(spacing: 16) {
-            VStack(spacing: 12) {
-                TextField("Email", text: $email)
-                    .textContentType(.username)
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($focusedField, equals: .email)
-                    .submitLabel(.next)
-                    .onSubmit { focusedField = .password }
-                    .padding(14)
-                    .background(fieldBackground)
+            Text("Es el N° de 11 dígitos que figura en tu factura MetroGAS.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                SecureField("Contraseña", text: $password)
-                    .textContentType(.password)
-                    .focused($focusedField, equals: .password)
-                    .submitLabel(.go)
-                    .onSubmit { Task { await session.login(email: email, password: password) } }
-                    .padding(14)
-                    .background(fieldBackground)
+            TextField("N° de cliente", text: $customerNumber)
+                .keyboardType(.numberPad)
+                .textContentType(.username)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .font(.body.monospacedDigit())
+                .focused($focusedField)
+                .padding(14)
+                .background(fieldBackground)
+                .onChange(of: customerNumber) { _, newValue in
+                    let digits = newValue.filter(\.isNumber)
+                    if digits != newValue {
+                        customerNumber = String(digits.prefix(11))
+                    } else if digits.count > 11 {
+                        customerNumber = String(digits.prefix(11))
+                    }
+                }
+
+            if digitsOnly.count > 0 && digitsOnly.count != 11 {
+                Text("Faltan \(11 - digitsOnly.count) dígito\(11 - digitsOnly.count == 1 ? "" : "s").")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if let error = session.loginError {
@@ -211,18 +210,17 @@ struct LoginView: View {
                     .font(.footnote)
                     .foregroundStyle(MetrogasTheme.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             Button {
-                focusedField = nil
-                Task { await session.login(email: email, password: password) }
+                focusedField = false
+                Task { await submitLogin(customerNumber) }
             } label: {
                 HStack {
-                    if session.isLoggingIn && !session.showGoogleAuth {
+                    if session.isLoggingIn {
                         ProgressView().tint(.white)
                     }
-                    Text("Ingresar")
+                    Text(session.isLoggingIn ? "Consultando MetroGAS…" : "Ingresar")
                         .font(.headline)
                 }
                 .frame(maxWidth: .infinity)
@@ -241,40 +239,8 @@ struct LoginView: View {
                 }
             }
             .buttonStyle(PressableGlassStyle())
-            .disabled(session.isLoggingIn)
-
-            HStack {
-                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1)
-                Text("o")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1)
-            }
-
-            Button {
-                focusedField = nil
-                Task { await session.startGoogleLogin() }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "g.circle.fill")
-                        .font(.title3)
-                    Text("Continuar con Google")
-                        .font(.subheadline.weight(.semibold))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
-                .foregroundStyle(.primary)
-                .background {
-                    Capsule(style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.45), lineWidth: 1)
-                        )
-                }
-            }
-            .buttonStyle(PressableGlassStyle())
-            .disabled(session.isLoggingIn)
+            .disabled(!canSubmit)
+            .opacity(canSubmit || session.isLoggingIn ? 1 : 0.55)
         }
         .padding(22)
         .liquidGlass(cornerRadius: 28, prominent: true)
@@ -282,7 +248,7 @@ struct LoginView: View {
 
     private var footerLinks: some View {
         VStack(spacing: 12) {
-            Link("Registrarme en Oficina Virtual", destination: MetrogasURLs.registro)
+            Link("¿Dónde veo mi N° de cliente?", destination: MetrogasURLs.saldos)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(MetrogasTheme.brandBlue)
 
@@ -299,5 +265,14 @@ struct LoginView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
             )
+    }
+
+    private func submitLogin(_ raw: String) async {
+        await session.loginWithCustomerNumber(raw)
+        if session.isAuthenticated,
+           let id = session.customerNumber,
+           let snapshot = session.consumePendingLoginSnapshot() {
+            store.applyCustomerLoginSnapshot(snapshot, customerNumber: id)
+        }
     }
 }
