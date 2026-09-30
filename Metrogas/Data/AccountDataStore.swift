@@ -311,7 +311,6 @@ final class AccountDataStore: ObservableObject {
     }
 
     func clear() {
-        let email = account.email
         invoices = []
         readings = []
         account = .empty
@@ -328,8 +327,8 @@ final class AccountDataStore: ObservableObject {
         UserDefaults.standard.removeObject(forKey: Keys.lastSync)
         WidgetSnapshotStore.clear()
         WidgetCenter.shared.reloadAllTimelines()
-        // Al cerrar sesión no conservamos vínculo: evita reabrir con datos ajenos.
-        LinkedAccountStore.unbind(email: email)
+        // Los vínculos confirmados por billing quedan por email; al volver a entrar
+        // se revalidan contra el portal (forcePortalDiscovery).
     }
 
     private func persistCache(bindCustomer: Bool = false) {
