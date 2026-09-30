@@ -23,9 +23,13 @@ actor MetrogasDataService {
             return identity.email
         }()
 
-        // Esperar sesión de portal usable (crítico tras Google OAuth).
-        for _ in 0..<8 {
-            if await MetrogasAuthService.shared.probePortalSession() { break }
+        // Esperar sesión de portal usable (crítico tras Google OAuth / IdP).
+        var portalReady = false
+        for _ in 0..<16 {
+            if await MetrogasAuthService.shared.probePortalSession() {
+                portalReady = true
+                break
+            }
             try? await Task.sleep(nanoseconds: 400_000_000)
         }
 
@@ -33,13 +37,26 @@ actor MetrogasDataService {
         let preferredHint = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "")
             ?? LinkedAccountStore.customerNumber(forEmail: email)
 
-        // Discovery siempre; preferred solo si el portal lo lista como candidato.
-        let snapshot = try await PortalDataBridge.shared.syncFromSession(
+        // Discovery en portal; si no hay candidatos, PortalDataBridge usa preferredHint.
+        var snapshot = try await PortalDataBridge.shared.syncFromSession(
             loginHint: email,
             preferredAccountId: preferredHint,
             forcePortalDiscovery: true,
-            timeoutSeconds: 40
+            timeoutSeconds: 44
         )
+
+        // Tras Google a veces el shell SAP hidrata tarde: reintentar discovery una vez.
+        let firstEmpty = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) == nil
+            && snapshot.invoices.isEmpty
+        if firstEmpty, portalReady {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            snapshot = try await PortalDataBridge.shared.syncFromSession(
+                loginHint: email,
+                preferredAccountId: preferredHint,
+                forcePortalDiscovery: true,
+                timeoutSeconds: 36
+            )
+        }
 
         var account = seedAccount(loginHint: email, customerNumber: nil)
         account = MetrogasJSONParser.mergeAccount(account, snapshot.account)
@@ -48,10 +65,9 @@ actor MetrogasDataService {
         let finalProfile = !snapshot.account.holderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let finalAddress = !snapshot.account.supplyAddress.isEmpty && snapshot.account.supplyAddress != "—"
         let finalInvoices = !snapshot.invoices.isEmpty
-        let ownershipOK = emailOwnershipAllowsBind(loginHint: email, accountEmail: snapshot.account.email)
-        let finalConfirmed = finalId != nil
-            && (finalProfile || finalAddress || finalInvoices)
-            && ownershipOK
+        // La sesión autenticada del portal ya prueba que es TU cuenta Google/MetroGAS.
+        // No exigir match con el email de factura digital (suele ser otro).
+        let finalConfirmed = finalId != nil && (finalProfile || finalAddress || finalInvoices)
 
         if let email, !email.isEmpty {
             account.email = email
@@ -59,8 +75,7 @@ actor MetrogasDataService {
 
         guard let finalId, finalConfirmed else {
             account.customerNumber = "—"
-            if let email { LinkedAccountStore.unbind(email: email) }
-            // Sin confirmación de sesión/email: no mostrar datos ajenos.
+            // No borrar un vínculo previo válido solo porque discovery falló esta vez.
             return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
         }
 
@@ -74,17 +89,6 @@ actor MetrogasDataService {
         }
 
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
-    }
-
-    /// Si hay email de login y email de cuenta/subscription, deben coincidir.
-    private func emailOwnershipAllowsBind(loginHint: String?, accountEmail: String) -> Bool {
-        let login = loginHint?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-        let account = accountEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard login.contains("@"), account.contains("@") else {
-            // Sin email de cuenta no podemos negar; discovery de sesión ya filtró candidatos.
-            return true
-        }
-        return login == account
     }
 
     private func seedAccount(loginHint: String?, customerNumber: String?) -> AccountProfile {

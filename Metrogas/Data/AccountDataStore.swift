@@ -280,23 +280,33 @@ final class AccountDataStore: ObservableObject {
                 syncMessage = invoices.isEmpty
                     ? "No encontramos facturas todavía. Deslizá hacia abajo para reintentar."
                     : nil
+            } else if let linkedId, !invoices.isEmpty, previousId == linkedId {
+                // Google/OV: sync falló esta vez pero hay caché de la misma cuenta — no borrar.
+                needsCustomerNumber = false
+                syncMessage = "No pudimos actualizar ahora. Deslizá hacia abajo para reintentar."
             } else {
-                // Sync no confirmó cuenta: limpiar datos ajenos y pedir N° si hace falta.
-                LinkedAccountStore.unbind(email: emailHint)
-                invoices = []
-                readings = []
-                account.holderName = ""
-                account.customerNumber = "—"
-                account.supplyAddress = "—"
-                account.locality = "—"
-                account.postalCode = "—"
-                account.phone = "—"
-                account.meterNumber = "—"
-                account.tariffCategory = "—"
+                // Pedir N° sin tirar el email de login ni un vínculo previo a ciegas.
                 if let emailHint { account.email = emailHint }
-                customerNumberDraft = ""
-                needsCustomerNumber = true
-                syncMessage = "No pudimos asociar tu N° de cliente automáticamente. Cargalo en Cuenta (11 dígitos de tu factura) y queda vinculado."
+                if linkedId == nil {
+                    account.holderName = ""
+                    account.customerNumber = "—"
+                    account.supplyAddress = "—"
+                    account.locality = "—"
+                    account.postalCode = "—"
+                    account.phone = "—"
+                    account.meterNumber = "—"
+                    account.tariffCategory = "—"
+                    invoices = []
+                    readings = []
+                    customerNumberDraft = ""
+                    needsCustomerNumber = true
+                    syncMessage = "No pudimos asociar tu N° de cliente automáticamente. Cargalo en Cuenta (11 dígitos de tu factura) y queda vinculado."
+                } else {
+                    account.customerNumber = linkedId
+                    customerNumberDraft = linkedId
+                    needsCustomerNumber = false
+                    syncMessage = "No pudimos actualizar tus facturas. Deslizá hacia abajo para reintentar."
+                }
             }
 
             lastSync = Date()

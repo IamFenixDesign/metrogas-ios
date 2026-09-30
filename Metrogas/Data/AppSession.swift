@@ -249,17 +249,29 @@ final class AppSession: ObservableObject {
     }
 
     private func finishWebLogin(method: LoginMethod) async {
+        // Asegurar cookies WK ↔ HTTP antes del sync (crítico con Google).
+        await WebCookieBridge.syncWebKitCookiesToHTTP()
+        var cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+        await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+
         var resolvedEmail = loginEmail
-        for _ in 0..<8 {
+        for _ in 0..<12 {
             let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
             if let email = identity.email, !email.isEmpty {
                 resolvedEmail = email
                 break
             }
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: 300_000_000)
         }
         if let resolvedEmail {
             loginEmail = resolvedEmail
+        }
+
+        // Re-probe: tras Google el portal a veces tarda un poco más en quedar usable.
+        for _ in 0..<8 {
+            if await MetrogasAuthService.shared.probePortalSession() { break }
+            await WebCookieBridge.syncWebKitCookiesToHTTP()
+            try? await Task.sleep(nanoseconds: 400_000_000)
         }
 
         lastLoginMethod = method
@@ -270,7 +282,7 @@ final class AppSession: ObservableObject {
         webLoginSawIdP = false
         webLoginSawGoogle = false
         isConfirmingWebSession = false
-        let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
+        cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
         await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
         didBootstrapSession = true
         isAuthenticated = true

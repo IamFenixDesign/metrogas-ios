@@ -74,19 +74,27 @@ final class PortalDataBridge: NSObject {
             ].compactMap { $0 }
         )
 
-        // Sin candidatos de la sesión → no adivinar con preferred (evita datos ajenos).
-        guard !candidates.isEmpty else {
+        // Sin candidatos en el portal: si hay N° ya vinculado a ESTE email y la
+        // sesión está viva (típico tras Google), consultar M360 con ese N°.
+        var ordered = candidates
+        if ordered.isEmpty, let preferred {
+            ordered = [preferred]
+        }
+        guard !ordered.isEmpty else {
             return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
         }
 
-        var ordered = candidates
         if let preferred, let idx = ordered.firstIndex(of: preferred) {
             ordered.remove(at: idx)
             ordered.insert(preferred, at: 0)
         }
 
-        // 2) Probar hasta 3 candidatos; preferir match de email (subscription/billing).
-        var fallback: MetrogasDataSnapshot?
+        // 2) Probar hasta 3 candidatos. Preferir match de email de factura digital,
+        // pero NO descartar mismatch: con Google el email de login suele diferir
+        // del email de adhesión a factura digital. La sesión del portal ya autoriza.
+        var matched: MetrogasDataSnapshot?
+        var unknown: MetrogasDataSnapshot?
+        var mismatched: MetrogasDataSnapshot?
         let saldosTimeout = max(14, timeoutSeconds * 0.45)
         for accountId in ordered.prefix(3) {
             let saldos = try await syncSaldosOnly(
@@ -96,22 +104,34 @@ final class PortalDataBridge: NSObject {
                 timeout: saldosTimeout
             )
             let ownership = Self.emailOwnership(loginHint: loginHint, accountEmail: saldos.account.email)
-            if ownership == .mismatch { continue }
 
             let hasSignal = !saldos.account.holderName.isEmpty
                 || (!saldos.account.supplyAddress.isEmpty && saldos.account.supplyAddress != "—")
                 || !saldos.invoices.isEmpty
             guard hasSignal else { continue }
 
-            if ownership == .match {
+            switch ownership {
+            case .match:
+                matched = saldos
                 return saldos
-            }
-            if fallback == nil {
-                fallback = saldos
+            case .unknown:
+                if unknown == nil { unknown = saldos }
+            case .mismatch:
+                if mismatched == nil { mismatched = saldos }
             }
         }
 
-        return fallback ?? MetrogasDataSnapshot(account: account, invoices: [], readings: [])
+        if let matched { return matched }
+        if let unknown { return unknown }
+        if let mismatched {
+            // Conservar email de login Google/MetroGAS (no el de adhesión M360).
+            var trusted = mismatched
+            if let loginHint, !loginHint.isEmpty {
+                trusted.account.email = loginHint
+            }
+            return trusted
+        }
+        return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
     }
 
     private enum EmailOwnership {
