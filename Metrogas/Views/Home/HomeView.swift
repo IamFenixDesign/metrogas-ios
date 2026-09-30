@@ -7,62 +7,61 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    TabBarScrollProbe()
+            VStack(alignment: .leading, spacing: 16) {
+                brandHero
+                    .appearMotion(visible: appear, index: 0)
 
-                    brandHero
-                        .appearMotion(visible: appear, index: 0)
-
-                    if store.isLoading {
-                        ProgressView("Sincronizando tu cuenta…")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .padding(.horizontal, 16)
-                            .liquidGlass(cornerRadius: 18)
-                            .appearMotion(visible: appear, index: 1)
-                    }
-
-                    if let message = store.syncMessage {
-                        Text(message)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .liquidGlass(cornerRadius: 18)
-                            .appearMotion(visible: appear, index: 1)
-                    }
-
-                    nextInvoiceCard
-                        .appearMotion(visible: appear, index: 2)
-
-                    UpcomingDueSection()
-                        .appearMotion(visible: appear, index: 3)
-
-                    quickMetrics
-                        .appearMotion(visible: appear, index: 4)
-
-                    recentActivity
-                        .appearMotion(visible: appear, index: 5)
-
-                    FloatingTabBarSpacer()
+                if store.isLoading {
+                    ProgressView("Sincronizando tu cuenta…")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 14)
+                        .liquidGlass(cornerRadius: 16)
+                        .appearMotion(visible: appear, index: 1)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
+
+                if let message = store.syncMessage {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .liquidGlass(cornerRadius: 16)
+                        .appearMotion(visible: appear, index: 1)
+                }
+
+                nextInvoiceCard
+                    .appearMotion(visible: appear, index: 2)
+
+                UpcomingDueSection()
+                    .appearMotion(visible: appear, index: 3)
+
+                quickMetrics
+                    .appearMotion(visible: appear, index: 4)
+
+                recentActivity
+                    .appearMotion(visible: appear, index: 5)
+
+                Spacer(minLength: 0)
+
+                FloatingTabBarSpacer()
             }
-            .scrollIndicators(.automatic)
-            .tracksFloatingTabBar(tabScroll)
+            .padding(.horizontal, 20)
+            .padding(.top, 4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background { LiquidGlassBackground() }
             .navigationTitle("Inicio")
             .navigationBarTitleDisplayMode(.large)
             .onAppear {
+                tabScroll.reset()
+                TabBarScrollState.shared = tabScroll
                 withAnimation(MetrogasTheme.springSoft) { appear = true }
             }
         }
     }
 
     private var brandHero: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("Tu gas natural en un vistazo")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
@@ -81,7 +80,7 @@ struct HomeView: View {
             NavigationLink {
                 InvoiceDetailView(invoiceID: invoice.id)
             } label: {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text(invoice.status == .overdue ? "Factura vencida" : "Próximo vencimiento")
                             .font(.subheadline.weight(.semibold))
@@ -92,7 +91,7 @@ struct HomeView: View {
                     }
 
                     Text(Formatters.money(invoice.amountARS))
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .monospacedDigit()
                         .contentTransition(.numericText())
@@ -108,10 +107,10 @@ struct HomeView: View {
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.white.opacity(0.88))
                 }
-                .padding(22)
+                .padding(18)
                 .background {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .fill(
                                 LinearGradient(
                                     colors: [
@@ -123,7 +122,7 @@ struct HomeView: View {
                                     endPoint: .bottomTrailing
                                 )
                             )
-                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .fill(
                                 LinearGradient(
                                     colors: [
@@ -136,7 +135,7 @@ struct HomeView: View {
                                 )
                             )
                             .blendMode(.plusLighter)
-                        RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .strokeBorder(
                                 LinearGradient(
                                     colors: [
@@ -150,7 +149,7 @@ struct HomeView: View {
                                 lineWidth: 1
                             )
                     }
-                    .shadow(color: MetrogasTheme.brandBlue.opacity(0.35), radius: 18, y: 10)
+                    .shadow(color: MetrogasTheme.brandBlue.opacity(0.35), radius: 14, y: 8)
                 }
             }
             .buttonStyle(PressableGlassStyle())
@@ -175,19 +174,19 @@ struct HomeView: View {
     }
 
     private var recentActivity: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "Actividad reciente", subtitle: "Últimas facturas")
 
             if store.invoices.isEmpty {
                 Text(store.isLoading ? "Buscando movimientos…" : "Todavía no hay movimientos para mostrar.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .padding(16)
+                    .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .liquidGlass(cornerRadius: 20)
+                    .liquidGlass(cornerRadius: 18)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(store.invoices.prefix(4))) { invoice in
+                    ForEach(Array(store.invoices.prefix(3))) { invoice in
                         NavigationLink {
                             InvoiceDetailView(invoiceID: invoice.id)
                         } label: {
@@ -195,13 +194,13 @@ struct HomeView: View {
                         }
                         .buttonStyle(PressableGlassStyle())
 
-                        if invoice.id != store.invoices.prefix(4).last?.id {
+                        if invoice.id != store.invoices.prefix(3).last?.id {
                             Divider().padding(.leading, 12).opacity(0.35)
                         }
                     }
                 }
-                .padding(.vertical, 4)
-                .liquidGlass(cornerRadius: 22)
+                .padding(.vertical, 2)
+                .liquidGlass(cornerRadius: 20)
             }
         }
     }
