@@ -216,6 +216,39 @@ actor MetrogasAuthService {
         return cookies
     }
 
+    /// Intenta leer el email de la sesión (útil tras Google OAuth).
+    func resolveSignedInEmail() async -> String? {
+        // 1) Cookies con email tipico de IdP
+        if let cookies = cookieJar.cookies {
+            for cookie in cookies {
+                let value = cookie.value
+                if let email = MetrogasJSONParser.firstEmail(in: value) {
+                    return email.lowercased()
+                }
+                let name = cookie.name.lowercased()
+                if (name.contains("email") || name.contains("mail") || name.contains("user")) ,
+                   value.contains("@"),
+                   let email = MetrogasJSONParser.firstEmail(in: value) {
+                    return email.lowercased()
+                }
+            }
+        }
+
+        // 2) HTML del portal / login residual
+        for url in [MetrogasURLs.portalMobile, MetrogasURLs.portalOV2, MetrogasURLs.acceso] {
+            guard let html = try? await loadHTML(url) else { continue }
+            if let email = MetrogasJSONParser.firstEmail(in: html) {
+                return email.lowercased()
+            }
+        }
+        return nil
+    }
+
+    private func loadHTML(_ url: URL) async throws -> String {
+        let result = try await get(url)
+        return String(data: result.data, encoding: .utf8) ?? ""
+    }
+
     func clearCookies() {
         cookieJar.cookies?.forEach(cookieJar.deleteCookie)
     }

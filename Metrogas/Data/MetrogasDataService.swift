@@ -6,8 +6,8 @@ struct MetrogasDataSnapshot: Sendable {
     var readings: [ConsumptionReading]
 }
 
-/// Sincroniza datos reales de “Tu Factura / Saldos” (OvServiceHub M360)
-/// usando el N° de cliente de 11 dígitos + bridge oculto (reCAPTCHA + XHR).
+/// Sincroniza automáticamente con la sesión de Oficina Virtual
+/// (login MetroGAS o Google): descubre el N° de cliente y carga M360.
 actor MetrogasDataService {
     static let shared = MetrogasDataService()
 
@@ -22,33 +22,29 @@ actor MetrogasDataService {
         session = URLSession(configuration: config)
     }
 
-    func fetchAccountData(accountId: String, loginHint: String?) async throws -> MetrogasDataSnapshot {
-        guard let normalized = MetrogasURLs.normalizedCustomerNumber(accountId) else {
-            return MetrogasDataSnapshot(
-                account: seedAccount(loginHint: loginHint, customerNumber: accountId),
-                invoices: [],
-                readings: []
-            )
-        }
+    func fetchAccountData(loginHint: String?, preferredAccountId: String?) async throws -> MetrogasDataSnapshot {
+        var account = seedAccount(loginHint: loginHint, customerNumber: preferredAccountId)
 
-        var account = seedAccount(loginHint: loginHint, customerNumber: normalized)
-
-        // Calentar sesión portal (opcional; saldos es público con captcha).
+        // Renueva cookies SAML/portal de la cuenta ya autenticada.
         _ = try? await establishSiteSession(MetrogasURLs.portalOV2)
-        _ = try? await establishSiteSession(MetrogasURLs.saldos)
+        _ = try? await establishSiteSession(MetrogasURLs.accesoOV2)
+        _ = try? await establishSiteSession(MetrogasURLs.portalMobile)
+        _ = try? await establishSiteSession(MetrogasURLs.acceso)
 
-        let bridgeSnapshot = try await PortalDataBridge.shared.sync(
-            accountId: normalized,
+        let snapshot = try await PortalDataBridge.shared.syncFromSession(
             loginHint: loginHint,
-            timeoutSeconds: 28
+            preferredAccountId: preferredAccountId,
+            timeoutSeconds: 36
         )
 
-        account = MetrogasJSONParser.mergeAccount(account, bridgeSnapshot.account)
-        account.customerNumber = normalized
+        account = MetrogasJSONParser.mergeAccount(account, snapshot.account)
+        if let id = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber)
+            ?? MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "") {
+            account.customerNumber = id
+        }
 
-        var invoices = bridgeSnapshot.invoices
-        var readings = bridgeSnapshot.readings
-
+        var invoices = snapshot.invoices
+        var readings = snapshot.readings
         if readings.isEmpty && !invoices.isEmpty {
             readings = MetrogasJSONParser.deriveReadings(from: invoices)
         }
@@ -56,9 +52,11 @@ actor MetrogasDataService {
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
     }
 
-    private func seedAccount(loginHint: String?, customerNumber: String) -> AccountProfile {
+    private func seedAccount(loginHint: String?, customerNumber: String?) -> AccountProfile {
         var account = AccountProfile.empty
-        account.customerNumber = MetrogasURLs.normalizedCustomerNumber(customerNumber) ?? customerNumber
+        if let customerNumber, let normalized = MetrogasURLs.normalizedCustomerNumber(customerNumber) {
+            account.customerNumber = normalized
+        }
         if let loginHint, !loginHint.isEmpty {
             account.email = loginHint
             let local = loginHint.split(separator: "@").first.map(String.init) ?? loginHint
@@ -125,7 +123,7 @@ actor MetrogasDataService {
         guard let inner = snippet.split(separator: "\"").dropFirst().first else { return nil }
         let raw = String(inner)
         if raw.hasPrefix("http") { return URL(string: raw) }
-        return URL(string: raw, relativeTo: URL(string: "https://saldos.micuenta.metrogas.com.ar")!)?.absoluteURL
+        return URL(string: raw, relativeTo: URL(string: "https://portal.micuenta.metrogas.com.ar")!)?.absoluteURL
     }
 
     private func extractFormFields(from html: String) -> [String: String] {

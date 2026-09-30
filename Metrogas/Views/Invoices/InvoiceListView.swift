@@ -96,17 +96,11 @@ struct InvoiceListView: View {
         } description: {
             Text(
                 store.invoices.isEmpty
-                    ? "Sincronizá tu cuenta o deslizá hacia abajo para reintentar."
+                    ? (store.isLoading
+                        ? "Estamos cargando las facturas de tu Oficina Virtual…"
+                        : "Deslizá hacia abajo para reintentar la sync automática.")
                     : "Probá otro filtro o borrá la búsqueda."
             )
-        } actions: {
-            if store.invoices.isEmpty {
-                Button("Sincronizar") {
-                    Task { await store.refresh(loginHint: session.loginEmail) }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(MetrogasTheme.brandBlue)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

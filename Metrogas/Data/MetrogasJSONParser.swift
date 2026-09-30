@@ -81,16 +81,33 @@ enum MetrogasJSONParser {
 
     static func parseDOMText(_ text: String) -> MetrogasDataSnapshot {
         var account = AccountProfile.empty
-        if let customer = firstMatch(text, #"(?:N[°º]?\s*(?:de\s*)?cliente|Cliente)\s*[:#]?\s*([0-9]{11})"#) {
+        if let customer = firstCustomerNumber(in: text) {
             account.customerNumber = customer
-        } else if let customer = firstMatch(text, #"\b([0-9]{11})\b"#) {
-            // fallback: primer bloque de 11 dígitos en pantalla saldos/portal
-            account.customerNumber = customer
+        }
+        if let email = firstEmail(in: text) {
+            account.email = email
         }
         if let meter = firstMatch(text, #"(?:Medidor|N[°º]?\s*medidor)\s*[:#]?\s*([A-Za-z0-9-]{4,})"#) {
             account.meterNumber = meter
         }
+        if let name = firstMatch(text, #"(?:Titular|Nombre)\s*[:#]?\s*([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s.'-]{3,60})"#) {
+            account.holderName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
+    }
+
+    static func firstCustomerNumber(in text: String) -> String? {
+        if let labeled = firstMatch(text, #"(?:N[°º]?\s*(?:de\s*)?cliente|Cliente|Account|Contrato)\s*[:#]?\s*([0-9]{11})"#),
+           let normalized = MetrogasURLs.normalizedCustomerNumber(labeled) {
+            return normalized
+        }
+        // Fallback: primer bloque de 11 dígitos (evita teléfonos de 10).
+        guard let raw = firstMatch(text, #"\b([0-9]{11})\b"#) else { return nil }
+        return MetrogasURLs.normalizedCustomerNumber(raw)
+    }
+
+    static func firstEmail(in text: String) -> String? {
+        firstMatch(text, #"([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})"#)
     }
 
     static func deriveReadings(from invoices: [Invoice]) -> [ConsumptionReading] {

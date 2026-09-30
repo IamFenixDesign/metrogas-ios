@@ -17,7 +17,7 @@ open Metrogas.xcodeproj
 ```
 
 1. Ingresá con **email/contraseña** o **Continuar con Google** (abre solo el login de Google).
-2. Ingresá tu **N° de cliente de 11 dígitos** (en Inicio o Cuenta) para sincronizar facturas, saldo y consumo.
+2. Al entrar, la app **sincroniza sola** facturas, saldo, consumo y datos de tu cuenta MetroGAS.
 3. Usá las pestañas nativas: Inicio, Facturas, Consumo, Cuenta.
 
 ## IPA
@@ -32,7 +32,7 @@ El IPA por defecto es **unsigned**. Firma: `ci/SIGNING_SECRETS.md`.
 MetroGAS no publica una API abierta. Esta app:
 
 1. Autentica de forma nativa contra SAP Identity (email/contraseña) o Google OAuth.
-2. Con el N° de cliente, consulta **saldos.micuenta** (OvServiceHub M360: `publicbilling/r2`, `listR2`, `consumption`) vía un bridge oculto con reCAPTCHA.
+2. Con la sesión activa, descubre el N° de cliente en el portal y consulta **saldos.micuenta** (M360) en segundo plano.
 3. Cachea el último sync y el N° de cliente en el dispositivo.
 4. Al cerrar sesión, borra cookies y caché local (conserva el N° de cliente).
 

@@ -15,7 +15,7 @@ final class AccountDataStore: ObservableObject {
     @Published var syncMessage: String?
     /// La sesión SAP venció y hace falta volver a iniciar sesión.
     @Published var needsReauthentication = false
-    /// Falta el N° de cliente de 11 dígitos para consultar M360.
+    /// Solo como respaldo si la OV no devolvió N° de cliente.
     @Published var needsCustomerNumber = false
     @Published var customerNumberDraft: String = ""
 
@@ -32,7 +32,7 @@ final class AccountDataStore: ObservableObject {
             account.customerNumber = normalized
             customerNumberDraft = normalized
         }
-        needsCustomerNumber = MetrogasURLs.normalizedCustomerNumber(account.customerNumber) == nil
+        needsCustomerNumber = false
     }
 
     var filteredInvoices: [Invoice] {
@@ -88,6 +88,7 @@ final class AccountDataStore: ObservableObject {
     var resolvedCustomerNumber: String? {
         MetrogasURLs.normalizedCustomerNumber(account.customerNumber)
             ?? MetrogasURLs.normalizedCustomerNumber(customerNumberDraft)
+            ?? MetrogasURLs.normalizedCustomerNumber(UserDefaults.standard.string(forKey: Keys.customerNumber) ?? "")
     }
 
     func invoice(id: String) -> Invoice? {
@@ -134,22 +135,16 @@ final class AccountDataStore: ObservableObject {
         persistCache()
     }
 
+    /// Sync automática con la sesión activa (sin botón).
     func refresh(loginHint: String? = nil) async {
         guard !isLoading else { return }
         isLoading = true
         syncMessage = nil
+        needsCustomerNumber = false
         defer { isLoading = false }
 
         if let loginHint { applyLoginHint(email: loginHint) }
 
-        guard let customerNumber = resolvedCustomerNumber else {
-            needsCustomerNumber = true
-            syncMessage = "Para cargar facturas y saldo necesitamos tu N° de cliente de 11 dígitos."
-            return
-        }
-        needsCustomerNumber = false
-
-        // Revalidar sesión SAP antes de pedir datos (cubre app reabierta con flag local).
         let saved = CredentialStore.load()
         do {
             _ = try await MetrogasAuthService.shared.ensureActiveSession(
@@ -165,16 +160,25 @@ final class AccountDataStore: ObservableObject {
             needsReauthentication = true
             return
         } catch {
-            // Seguimos: puede ser un glitch de red con cookies aún válidas.
+            // Seguimos: cookies de Google/portal pueden seguir válidas.
         }
 
         do {
             let snapshot = try await MetrogasDataService.shared.fetchAccountData(
-                accountId: customerNumber,
-                loginHint: loginHint ?? account.email
+                loginHint: loginHint ?? account.email,
+                preferredAccountId: resolvedCustomerNumber
             )
+
             var nextAccount = snapshot.account
-            nextAccount.customerNumber = customerNumber
+            if let id = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) {
+                nextAccount.customerNumber = id
+                customerNumberDraft = id
+                UserDefaults.standard.set(id, forKey: Keys.customerNumber)
+                needsCustomerNumber = false
+            } else if let kept = resolvedCustomerNumber {
+                nextAccount.customerNumber = kept
+            }
+
             if nextAccount.email.isEmpty {
                 nextAccount.email = loginHint ?? account.email
             }
@@ -182,20 +186,25 @@ final class AccountDataStore: ObservableObject {
                 applyLoginHint(email: loginHint ?? account.email)
                 nextAccount.holderName = account.holderName
             }
+
             account = nextAccount
             invoices = snapshot.invoices
             readings = snapshot.readings
             lastSync = Date()
             UserDefaults.standard.set(lastSync, forKey: Keys.lastSync)
-            UserDefaults.standard.set(customerNumber, forKey: Keys.customerNumber)
             persistCache()
-            if snapshot.invoices.isEmpty && snapshot.readings.isEmpty {
-                syncMessage = "No encontramos facturas para el N° \(customerNumber). Verificá el número o reintentá en unos segundos."
+
+            if MetrogasURLs.normalizedCustomerNumber(account.customerNumber) == nil
+                && snapshot.invoices.isEmpty {
+                needsCustomerNumber = true
+                syncMessage = "No pudimos leer el N° de cliente de tu Oficina Virtual. Si lo sabés, cargalo en Cuenta."
+            } else if snapshot.invoices.isEmpty && snapshot.readings.isEmpty {
+                syncMessage = "Sesión activa. Todavía no llegaron facturas/consumo; en unos segundos se reintenta solo."
             } else {
                 syncMessage = nil
             }
         } catch {
-            syncMessage = "No pudimos sincronizar con MetroGAS. Revisá tu conexión e intentá de nuevo."
+            syncMessage = "No pudimos sincronizar con MetroGAS. Revisá tu conexión; vamos a reintentar."
         }
     }
 
@@ -207,11 +216,10 @@ final class AccountDataStore: ObservableObject {
         if let keptCustomer, let normalized = MetrogasURLs.normalizedCustomerNumber(keptCustomer) {
             account.customerNumber = normalized
             customerNumberDraft = normalized
-            needsCustomerNumber = false
         } else {
             customerNumberDraft = ""
-            needsCustomerNumber = true
         }
+        needsCustomerNumber = false
         searchText = ""
         invoiceFilter = .all
         consumptionPeriod = .last12

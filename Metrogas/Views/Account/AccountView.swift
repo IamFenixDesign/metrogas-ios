@@ -24,30 +24,32 @@ struct AccountView: View {
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
                     }
 
-                    Section {
-                        TextField("11 dígitos", text: $store.customerNumberDraft)
-                            .keyboardType(.numberPad)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .font(.body.monospacedDigit())
-                        if let customerNumberError {
-                            Text(customerNumberError)
-                                .font(.caption)
-                                .foregroundStyle(MetrogasTheme.brandFlame)
-                        }
-                        Button("Guardar y sincronizar") {
-                            if store.saveCustomerNumber(store.customerNumberDraft) {
-                                customerNumberError = nil
-                                Task { await store.refresh(loginHint: session.loginEmail) }
-                            } else {
-                                customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
+                    if store.needsCustomerNumber {
+                        Section {
+                            TextField("11 dígitos", text: $store.customerNumberDraft)
+                                .keyboardType(.numberPad)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .font(.body.monospacedDigit())
+                            if let customerNumberError {
+                                Text(customerNumberError)
+                                    .font(.caption)
+                                    .foregroundStyle(MetrogasTheme.brandFlame)
                             }
+                            Button("Guardar N° de cliente") {
+                                if store.saveCustomerNumber(store.customerNumberDraft) {
+                                    customerNumberError = nil
+                                    Task { await store.refresh(loginHint: session.loginEmail) }
+                                } else {
+                                    customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
+                                }
+                            }
+                            .disabled(store.isLoading)
+                        } header: {
+                            Text("Respaldo N° de cliente")
+                        } footer: {
+                            Text("Solo si la Oficina Virtual no pudo leerlo sola. Aparece en tu factura.")
                         }
-                        .disabled(store.isLoading)
-                    } header: {
-                        Text("N° de cliente MetroGAS")
-                    } footer: {
-                        Text("Lo usamos para consultar facturas, saldo y consumo en Tu Factura / Saldos. Aparece en tu factura impresa o digital.")
                     }
 
                     Section("Suministro") {
@@ -100,16 +102,14 @@ struct AccountView: View {
                             session.persistAppearance()
                         }
 
-                        Button {
-                            Task { await store.refresh(loginHint: session.loginEmail) }
-                        } label: {
-                            if store.isLoading {
-                                Label("Sincronizando…", systemImage: "arrow.triangle.2.circlepath")
-                            } else {
-                                Label("Sincronizar cuenta", systemImage: "arrow.triangle.2.circlepath")
-                            }
+                        if store.isLoading {
+                            Label("Sincronizando con tu cuenta…", systemImage: "arrow.triangle.2.circlepath")
+                                .foregroundStyle(.secondary)
+                        } else if let last = store.lastSync {
+                            Text("Última sync: \(DateFormatter.metrogasDayMonthYear.string(from: last))")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
                         }
-                        .disabled(store.isLoading)
                     }
 
                     Section {

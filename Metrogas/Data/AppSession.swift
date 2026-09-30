@@ -23,6 +23,11 @@ final class AppSession: ObservableObject {
     private var googleFlowActive = false
     private var didBootstrapSession = false
 
+    private var loginHintMissing: Bool {
+        guard let loginEmail else { return true }
+        return loginEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     enum AppearanceMode: String, CaseIterable, Identifiable {
         case system = "Sistema"
         case light = "Claro"
@@ -104,6 +109,11 @@ final class AppSession: ObservableObject {
         if MetrogasURLs.isMetrogasPortalHost(host) {
             Task {
                 await WebCookieBridge.syncWebKitCookiesToHTTP()
+                if loginEmail == nil || loginHintMissing {
+                    if let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
+                        loginEmail = email
+                    }
+                }
                 googleFlowActive = false
                 showGoogleAuth = false
                 googleAuthURL = nil

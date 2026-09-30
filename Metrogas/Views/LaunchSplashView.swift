@@ -98,7 +98,16 @@ struct RootContainerView: View {
         if session.isAuthenticated {
             let usable = await session.restoreSessionIfNeeded()
             if usable {
+                if session.loginEmail == nil || session.loginEmail?.isEmpty == true,
+                   let email = await MetrogasAuthService.shared.resolveSignedInEmail() {
+                    session.loginEmail = email
+                }
                 await store.refresh(loginHint: session.loginEmail)
+                // Reintento silencioso si la primera pasada no trajo facturas.
+                if store.invoices.isEmpty && !store.needsReauthentication {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    await store.refresh(loginHint: session.loginEmail)
+                }
                 await reminders.reschedule(for: store.invoices)
             }
         }
