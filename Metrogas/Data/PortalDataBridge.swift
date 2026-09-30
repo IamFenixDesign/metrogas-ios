@@ -561,7 +561,8 @@ final class PortalDataBridge: NSObject {
               // captcha va en el path: /publicSubscription/{account}/{token}
               var url = path;
               if (path.indexOf('/publicSubscription/') !== -1) {
-                url = path.replace(/\/?$/, '/') + token;
+                if (url.charAt(url.length - 1) !== '/') { url = url + '/'; }
+                url = url + token;
               }
               var xhr = new XMLHttpRequest();
               xhr.open('GET', url, true);
