@@ -132,6 +132,8 @@ final class AccountDataStore: ObservableObject {
         customerNumberDraft = normalized
         LinkedAccountStore.bind(email: email ?? account.email, customerNumber: normalized)
         needsCustomerNumber = false
+        // Permitir una sync única tras vincular el N° (sigue siendo arranque de cuenta).
+        didSyncThisSession = false
         persistCache()
         return true
     }
@@ -194,20 +196,19 @@ final class AccountDataStore: ObservableObject {
             || trimmed.lowercased() == local.replacingOccurrences(of: "_", with: " ")
     }
 
-    /// Sync con la sesión activa.
-    /// - `force: false` (default): una sola vez por sesión si ya hay caché.
-    /// - `force: true`: pull-to-refresh / login fresco.
+    /// Sync de cuenta/facturas/consumo.
+    /// Solo debe llamarse al iniciar sesión (o al vincular N° de cliente por primera vez).
+    /// Recargar / pull-to-refresh / reabrir la app no sincroniza.
     func refresh(loginHint: String? = nil, force: Bool = false) async {
         guard !isLoading else { return }
 
-        // Una sola sync: no al cambiar de tab ni al reabrir la app si ya hay caché.
-        if !force {
-            if didSyncThisSession { return }
-            if !invoices.isEmpty, let lastSync, Date().timeIntervalSince(lastSync) < 6 * 60 * 60 {
-                didSyncThisSession = true
-                return
-            }
+        // Sin `force` no hay red: la info queda en caché local.
+        guard force else {
+            didSyncThisSession = true
+            return
         }
+        // Una sola sync por sesión de login.
+        if didSyncThisSession { return }
 
         isLoading = true
         syncMessage = nil

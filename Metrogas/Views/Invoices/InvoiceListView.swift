@@ -39,9 +39,6 @@ struct InvoiceListView: View {
                         }
                         .listStyle(.plain)
                         .scrollContentBackground(.hidden)
-                        .refreshable {
-                            await store.refresh(loginHint: session.loginEmail, force: true)
-                        }
                     }
                 }
             }

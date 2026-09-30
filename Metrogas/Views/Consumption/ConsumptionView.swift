@@ -20,9 +20,6 @@ struct ConsumptionView: View {
                     }
                     .padding(20)
                 }
-                .refreshable {
-                    await store.refresh(loginHint: session.loginEmail, force: true)
-                }
             }
             .navigationTitle("Consumo")
         }
