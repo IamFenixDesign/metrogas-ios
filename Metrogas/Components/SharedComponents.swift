@@ -88,7 +88,13 @@ struct GlassChip: View {
                 .padding(.vertical, 8)
                 .background {
                     Capsule(style: .continuous)
-                        .fill(selected ? MetrogasTheme.brandBlue.opacity(0.92) : .ultraThinMaterial)
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            if selected {
+                                Capsule(style: .continuous)
+                                    .fill(MetrogasTheme.brandBlue.opacity(0.92))
+                            }
+                        }
                         .overlay(
                             Capsule(style: .continuous)
                                 .strokeBorder(
