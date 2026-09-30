@@ -169,7 +169,14 @@ actor MetrogasAuthService {
             || looksAuthenticated(html: html)
     }
 
+    /// URL de entrada del mismo login web (portal → SAML → IdP asskova9q).
+    /// El WebView hace el autosubmit JS hasta “Acceso Mi Cuenta”.
+    func prepareWebLoginURL() -> URL {
+        MetrogasURLs.loginEntry
+    }
+
     /// Prepara la URL de Google OAuth usada por MetroGAS/SAP Identity.
+    /// Preferible: abrir `prepareWebLoginURL()` y tocar “Log On with Google” en el IdP.
     func prepareGoogleOAuthURL() async throws -> URL {
         let loginHTML = try await bootstrapLoginPage()
         let fields = extractFormFields(from: loginHTML)
@@ -179,7 +186,8 @@ actor MetrogasAuthService {
         var request = URLRequest(url: action)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue(MetrogasURLs.portalMobile.absoluteString, forHTTPHeaderField: "Referer")
+        request.setValue(MetrogasURLs.idpSSO.absoluteString, forHTTPHeaderField: "Referer")
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
         request.httpBody = formBody(fields)
 
         let (data, response) = try await session.data(for: request)
@@ -322,21 +330,19 @@ actor MetrogasAuthService {
 
     @discardableResult
     private func bootstrapLoginPage() async throws -> String {
-        // 1) Portal mobile
-        let portal = try await get(MetrogasURLs.portalMobile)
+        // Mismo inicio que la web: portal → authn MDS → IdP asskova9q SSO.
+        let portal = try await get(MetrogasURLs.loginEntry)
         var html = String(data: portal.data, encoding: .utf8) ?? ""
 
-        // 2) Auto-submit chain (authn → IDS)
-        for _ in 0..<4 {
+        for _ in 0..<6 {
+            if htmlContainsUsernameField(html) {
+                return html
+            }
             guard let action = firstFormAction(in: html) else { break }
             let fields = extractFormFields(from: html)
             let result = try await post(action, fields: fields)
             html = String(data: result.data, encoding: .utf8) ?? ""
             if htmlContainsUsernameField(html) {
-                return html
-            }
-            if let url = result.url, MetrogasURLs.isMetrogasAuthHost(url.host ?? "") ,
-               htmlContainsUsernameField(html) {
                 return html
             }
         }
@@ -352,17 +358,19 @@ actor MetrogasAuthService {
     }
 
     private func submitLogin(html: String, email: String, password: String?) async throws -> String {
-        guard let action = firstFormAction(in: html) ??
-                URL(string: "https://asskova9q.accounts.ondemand.com/saml2/idp/sso/asskova9q.accounts.ondemand.com")
-        else { throw MetrogasAuthError.unexpectedResponse }
+        guard let action = firstFormAction(in: html) ?? MetrogasURLs.idpSSO else {
+            throw MetrogasAuthError.unexpectedResponse
+        }
 
         var fields = extractFormFields(from: html)
         fields["j_username"] = email
         if let password {
             fields["j_password"] = password
         }
-        // Prefer POST for credential submission
-        fields["method"] = fields["method"]?.isEmpty == false ? fields["method"]! : "POST"
+        // El form IDS ya trae method=POST; no pisar campos SAML/xsrf.
+        if fields["method"]?.isEmpty != false {
+            fields["method"] = "POST"
+        }
 
         let result = try await post(action, fields: fields)
         var next = String(data: result.data, encoding: .utf8) ?? ""
@@ -402,8 +410,10 @@ actor MetrogasAuthService {
     }
 
     private func formBody(_ fields: [String: String]) -> Data {
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove(charactersIn: ":#[]@!$&'()*+,;=")
+        // application/x-www-form-urlencoded: encode todo salvo unsafe mínimo.
+        // Crítico para firmas/SAML con '/' y '+' (MDS → IdP SSO).
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
         let pairs = fields.map { key, value in
             let k = key.addingPercentEncoding(withAllowedCharacters: allowed) ?? key
             let v = value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
@@ -418,9 +428,9 @@ actor MetrogasAuthService {
         guard let match = html.range(of: #"action="([^"]+)""#, options: .regularExpression) else { return nil }
         let snippet = String(html[match])
         guard let inner = snippet.split(separator: "\"").dropFirst().first else { return nil }
-        let raw = String(inner)
+        let raw = Self.decodeHTMLEntities(String(inner))
         if raw.hasPrefix("http") { return URL(string: raw) }
-        return URL(string: raw, relativeTo: URL(string: "https://asskova9q.accounts.ondemand.com")!)?.absoluteURL
+        return URL(string: raw, relativeTo: MetrogasURLs.idpSSO)?.absoluteURL
     }
 
     private func extractFormFields(from html: String) -> [String: String] {
@@ -436,11 +446,19 @@ actor MetrogasAuthService {
             if tag.lowercased().contains("type=\"checkbox\"") && !tag.lowercased().contains("checked") {
                 continue
             }
-            fields[name] = value
-                .replacingOccurrences(of: "&quot;", with: "\"")
-                .replacingOccurrences(of: "&#x2713;", with: "✓")
+            fields[name] = Self.decodeHTMLEntities(value)
         }
         return fields
+    }
+
+    private static func decodeHTMLEntities(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&#x2713;", with: "✓")
+            .replacingOccurrences(of: "&#10003;", with: "✓")
     }
 
     private func capture(_ text: String, _ pattern: String) -> String? {
