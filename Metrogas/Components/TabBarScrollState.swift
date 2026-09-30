@@ -170,11 +170,6 @@ private extension CGRect {
 
 private extension UIView {
     func findVerticalScrollView(containing point: CGPoint) -> UIScrollView? {
-        let local = convert(point, from: nil)
-        guard bounds.contains(local) || self is UIWindow else {
-            // seguir buscando en subviews con hit test
-        }
-
         var best: UIScrollView?
         var bestArea: CGFloat = 0
 
@@ -182,10 +177,13 @@ private extension UIView {
             if let scroll = view as? UIScrollView,
                scroll.bounds.height > 120,
                scroll.contentSize.height > scroll.bounds.height + 20 {
-                let area = scroll.bounds.width * scroll.bounds.height
-                if area > bestArea {
-                    bestArea = area
-                    best = scroll
+                let frameInWindow = scroll.convert(scroll.bounds, to: nil)
+                if frameInWindow.contains(point) || best == nil {
+                    let area = scroll.bounds.width * scroll.bounds.height
+                    if area > bestArea {
+                        bestArea = area
+                        best = scroll
+                    }
                 }
             }
             for sub in view.subviews {
