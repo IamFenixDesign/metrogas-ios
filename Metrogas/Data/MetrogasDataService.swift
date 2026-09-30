@@ -24,7 +24,7 @@ actor MetrogasDataService {
     func fetchAccountData(loginHint: String?, preferredAccountId: String?) async throws -> MetrogasDataSnapshot {
         // Identidad rápida desde cookies/HTML (Google) sin WebView.
         let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
-        let email = {
+        let email: String? = {
             if let loginHint, !loginHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return loginHint
             }
