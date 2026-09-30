@@ -14,6 +14,14 @@ enum InvoiceStatus: String, Codable, CaseIterable, Identifiable {
         case .paid: return 2
         }
     }
+
+    var symbolName: String {
+        switch self {
+        case .paid: return "checkmark.circle.fill"
+        case .pending: return "clock.fill"
+        case .overdue: return "exclamationmark.triangle.fill"
+        }
+    }
 }
 
 struct Invoice: Identifiable, Hashable, Codable {
@@ -53,6 +61,15 @@ enum InvoiceFilter: String, CaseIterable, Identifiable {
     case overdue = "Vencidas"
 
     var id: String { rawValue }
+
+    var symbolName: String {
+        switch self {
+        case .all: return "doc.text.fill"
+        case .pending: return "clock.fill"
+        case .paid: return "checkmark.circle.fill"
+        case .overdue: return "exclamationmark.triangle.fill"
+        }
+    }
 
     func matches(_ invoice: Invoice) -> Bool {
         switch self {

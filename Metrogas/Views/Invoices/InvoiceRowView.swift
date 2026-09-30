@@ -13,91 +13,64 @@ struct InvoiceRowView: View {
     }
 
     var body: some View {
-        if compact {
-            compactRow
-        } else {
-            fullRow
-        }
-    }
+        HStack(spacing: compact ? 10 : 12) {
+            invoiceIcon
 
-    private var compactRow: some View {
-        HStack(spacing: 14) {
-            statusIcon
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(invoice.periodLabel)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
-                Text(invoice.number)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Text(invoice.number)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text("·")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(DateFormatter.metrogasDayMonthYear.string(from: invoice.dueDate))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 6) {
+
+            Spacer(minLength: 6)
+
+            VStack(alignment: .trailing, spacing: 4) {
                 Text(Formatters.money(invoice.amountARS))
                     .font(.subheadline.weight(.bold).monospacedDigit())
-                StatusBadge(status: invoice.status)
+                    .foregroundStyle(.primary)
+                    .contentTransition(.numericText())
+                StatusBadge(status: invoice.status, compact: true)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, compact ? 12 : 12)
+        .padding(.vertical, compact ? 10 : 10)
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(invoice.periodLabel), \(Formatters.money(invoice.amountARS)), \(invoice.status.rawValue)"
+        )
     }
 
-    private var fullRow: some View {
-        HStack(spacing: 0) {
-            Capsule(style: .continuous)
-                .fill(statusTint)
-                .frame(width: 4)
-                .padding(.vertical, 14)
-                .padding(.leading, 4)
-
-            HStack(alignment: .center, spacing: 14) {
-                statusIcon
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(invoice.periodLabel)
-                        .font(.system(.body, design: .rounded).weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text(invoice.number)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Label(
-                        "Vence \(DateFormatter.metrogasDayMonthYear.string(from: invoice.dueDate))",
-                        systemImage: "calendar"
-                    )
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                }
-
-                Spacer(minLength: 10)
-
-                VStack(alignment: .trailing, spacing: 8) {
-                    Text(Formatters.money(invoice.amountARS))
-                        .font(.system(.headline, design: .rounded).weight(.bold))
-                        .monospacedDigit()
-                        .foregroundStyle(.primary)
-                        .contentTransition(.numericText())
-                    StatusBadge(status: invoice.status)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
-        }
-        .contentShape(Rectangle())
-    }
-
-    private var statusIcon: some View {
+    private var invoiceIcon: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            Circle()
                 .fill(statusTint.opacity(0.14))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    Circle()
                         .strokeBorder(statusTint.opacity(0.28), lineWidth: 0.8)
                 )
-                .frame(width: 42, height: 42)
-            Image(systemName: invoice.status == .paid ? "checkmark.doc.fill" : "doc.text.fill")
-                .font(.body.weight(.semibold))
+                .frame(width: 32, height: 32)
+
+            Image(systemName: invoice.status.symbolName)
+                .font(.caption.weight(.bold))
                 .foregroundStyle(statusTint)
+                .symbolRenderingMode(.hierarchical)
         }
+        .accessibilityHidden(true)
     }
 }
