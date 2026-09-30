@@ -12,6 +12,9 @@ struct HomeView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         brandHero
+                        if store.needsCustomerNumber {
+                            customerNumberPrompt
+                        }
                         if store.isLoading {
                             ProgressView("Sincronizando tu cuenta…")
                                 .frame(maxWidth: .infinity)
@@ -69,6 +72,44 @@ struct HomeView: View {
                 .foregroundStyle(.primary)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var customerNumberPrompt: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("N° de cliente")
+                .font(.headline)
+            Text("Para ver facturas, saldo pendiente y consumo, ingresá los 11 dígitos de tu N° de cliente MetroGAS.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            TextField("Ej: 12345678901", text: $store.customerNumberDraft)
+                .keyboardType(.numberPad)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(.tertiarySystemFill))
+                )
+            Button {
+                if store.saveCustomerNumber(store.customerNumberDraft) {
+                    Task { await store.refresh(loginHint: session.loginEmail) }
+                }
+            } label: {
+                Text("Sincronizar cuenta")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(MetrogasTheme.brandBlue)
+            .disabled(store.isLoading)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
     }
 
     @ViewBuilder

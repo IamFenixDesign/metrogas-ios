@@ -2,9 +2,9 @@ import Foundation
 import UIKit
 import WebKit
 
-/// Motor de sync: carga el portal autenticado en un WKWebView oculto,
-/// intercepta XHR/fetch del OvServiceHub/UI5 y parsea facturas/consumo/cuenta.
-/// La UI de la app sigue siendo 100% nativa.
+/// Sync real contra saldos.micuenta (OvServiceHub M360):
+/// carga la SPA pública, resuelve reCAPTCHA invisible y captura
+/// publicbilling / listR2 / consumption. La UI de la app sigue nativa.
 @MainActor
 final class PortalDataBridge: NSObject {
     static let shared = PortalDataBridge()
@@ -16,17 +16,25 @@ final class PortalDataBridge: NSObject {
     private var finishTask: Task<Void, Never>?
     private var continuation: CheckedContinuation<MetrogasDataSnapshot, Error>?
     private var loginHint: String?
+    private var accountId: String = ""
+    private var didTriggerAPISync = false
 
-    func sync(loginHint: String?, timeoutSeconds: Double = 20) async throws -> MetrogasDataSnapshot {
+    /// Sincroniza facturas, deuda, consumo y titular para un N° de cliente de 11 dígitos.
+    func sync(accountId: String, loginHint: String?, timeoutSeconds: Double = 28) async throws -> MetrogasDataSnapshot {
         if continuation != nil {
             throw MetrogasAuthError.unexpectedResponse
         }
 
+        guard let normalized = MetrogasURLs.normalizedCustomerNumber(accountId) else {
+            throw MetrogasAuthError.unexpectedResponse
+        }
+
+        self.accountId = normalized
         self.loginHint = loginHint
+        self.didTriggerAPISync = false
         captured.removeAll()
         domText = ""
 
-        // Cookies de URLSession → WK
         let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
         await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
 
@@ -43,7 +51,6 @@ final class PortalDataBridge: NSObject {
         webView.isOpaque = false
         webView.alpha = 0.01
 
-        // Debe estar en jerarquía para que cargue con normalidad.
         if let window = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .flatMap(\.windows)
@@ -60,11 +67,10 @@ final class PortalDataBridge: NSObject {
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
 
-            // Cargar OV2 (apps reales) y también mobile.
-            webView.load(URLRequest(url: MetrogasURLs.portalOV2))
+            // Deep link real de la SPA: dispara consulta de deuda con captcha.
+            webView.load(URLRequest(url: MetrogasURLs.saldosGo(accountId: normalized)))
 
             finishTask = Task { [weak self] in
-                // Dar tiempo a SAML residual + tiles UI5 + XHR.
                 try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
                 await self?.completeIfNeeded()
             }
@@ -77,14 +83,16 @@ final class PortalDataBridge: NSObject {
         finishTask?.cancel()
         finishTask = nil
 
-        // Sync cookies de vuelta por si el portal renovó sesión.
         await WebCookieBridge.syncWebKitCookiesToHTTP()
 
-        let snapshot = PortalPayloadParser.parse(
+        var snapshot = PortalPayloadParser.parse(
             payloads: captured,
             domText: domText,
             loginHint: loginHint
         )
+        if MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber) == nil {
+            snapshot.account.customerNumber = accountId
+        }
 
         teardown()
         continuation.resume(returning: snapshot)
@@ -97,6 +105,15 @@ final class PortalDataBridge: NSObject {
         webView?.removeFromSuperview()
         webView = nil
         hostView = nil
+    }
+
+    /// Tras cargar la SPA, fuerza N° cliente (string 11 dígitos) y pide
+    /// deuda + facturas + consumo vía reCAPTCHA invisible del sitio.
+    private func triggerAPISyncIfNeeded() {
+        guard !didTriggerAPISync, let webView, !accountId.isEmpty else { return }
+        didTriggerAPISync = true
+        let js = Self.syncScript(accountId: accountId)
+        webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
     private static let hookScript = """
@@ -157,6 +174,145 @@ final class PortalDataBridge: NSObject {
       post('ready', { href: location.href });
     })();
     """
+
+    private static func syncScript(accountId: String) -> String {
+        // Sitekey + sufijo reales de BaseController (saldos M360).
+        """
+        (function() {
+          var ACCOUNT = "\(accountId)";
+          var SITEKEY = "6LfBwaEsAAAAAN5TTI0xROYdHwXd0skXXNDBtfWM";
+          var SUFFIX = "captchaMG2";
+          if (window.__metrogasAPISyncStarted) return;
+          window.__metrogasAPISyncStarted = true;
+
+          function postNative(type, payload) {
+            try { window.webkit.messageHandlers.metrogasSync.postMessage({type: type, payload: payload}); } catch (e) {}
+          }
+
+          function ensureRecaptcha(cb) {
+            if (window.grecaptcha && window.grecaptcha.render) { cb(); return; }
+            var s = document.createElement('script');
+            s.src = 'https://www.google.com/recaptcha/api.js?render=explicit';
+            s.onload = function() {
+              var n = 0;
+              var t = setInterval(function() {
+                n++;
+                if (window.grecaptcha && window.grecaptcha.render) { clearInterval(t); cb(); }
+                else if (n > 40) { clearInterval(t); postNative('syncError', { message: 'recaptcha' }); }
+              }, 250);
+            };
+            s.onerror = function() { postNative('syncError', { message: 'recaptcha-load' }); };
+            document.head.appendChild(s);
+          }
+
+          function waitGrecaptchaReady(cb) {
+            try {
+              window.grecaptcha.ready(cb);
+            } catch (e) {
+              setTimeout(function() { waitGrecaptchaReady(cb); }, 200);
+            }
+          }
+
+          function getToken(cb) {
+            waitGrecaptchaReady(function() {
+              var host = document.getElementById('__mg_captcha_host');
+              if (!host) {
+                host = document.createElement('div');
+                host.id = '__mg_captcha_host';
+                host.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;opacity:0;';
+                document.body.appendChild(host);
+              }
+              var done = false;
+              function finish(token) {
+                if (done) return;
+                done = true;
+                cb(token ? (token + SUFFIX) : '');
+              }
+              try {
+                if (typeof window.__mgCaptchaId !== 'number') {
+                  window.__mgCaptchaId = window.grecaptcha.render(host, {
+                    sitekey: SITEKEY,
+                    size: 'invisible',
+                    callback: finish,
+                    'error-callback': function() { finish(''); },
+                    'expired-callback': function() { finish(''); }
+                  });
+                }
+                window.grecaptcha.reset(window.__mgCaptchaId);
+                window.grecaptcha.execute(window.__mgCaptchaId);
+                setTimeout(function() { finish(''); }, 12000);
+              } catch (e) {
+                finish('');
+              }
+            });
+          }
+
+          function postJSON(path, bodyObj, cb) {
+            getToken(function(token) {
+              if (!token) { cb(0, ''); return; }
+              var payload = Object.assign({}, bodyObj);
+              if (path.indexOf('/consumption/') !== -1) {
+                payload.captcha = token;
+              } else {
+                payload.captcha2 = token;
+              }
+              var xhr = new XMLHttpRequest();
+              xhr.open('POST', path, true);
+              xhr.setRequestHeader('Content-Type', 'application/json');
+              xhr.setRequestHeader('Accept', 'application/json,*/*');
+              xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4) {
+                  cb(xhr.status, xhr.responseText || '');
+                }
+              };
+              xhr.send(JSON.stringify(payload));
+            });
+          }
+
+          function tryUI5Debt() {
+            try {
+              var inputs = document.querySelectorAll('input');
+              for (var i = 0; i < inputs.length; i++) {
+                var el = inputs[i];
+                if ((el.value && el.value.length >= 10) || (el.id && el.id.toLowerCase().indexOf('cust') !== -1)) {
+                  el.value = ACCOUNT;
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
+                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+              }
+            } catch (e) {}
+          }
+
+          function run() {
+            tryUI5Debt();
+            postNative('syncStart', { accountId: ACCOUNT });
+
+            postJSON('/OvServiceHub/api/v1/M360/publicbilling/r2', {
+              accountId: ACCOUNT,
+              relation: 'FD'
+            }, function(status, body) {
+              postNative('net', { url: '/OvServiceHub/api/v1/M360/publicbilling/r2', method: 'POST', status: status, body: body });
+
+              postJSON('/OvServiceHub/api/v1/M360/publicinvoice/listR2', {
+                accountId: ACCOUNT
+              }, function(status2, body2) {
+                postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/listR2', method: 'POST', status: status2, body: body2 });
+
+                postJSON('/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, {}, function(status3, body3) {
+                  postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, method: 'POST', status: status3, body: body3 });
+                  postNative('syncDone', { accountId: ACCOUNT });
+                });
+              });
+            });
+          }
+
+          ensureRecaptcha(function() {
+            // Dar tiempo a que la SPA monte el shell / hash /go/
+            setTimeout(run, 2500);
+          });
+        })();
+        """
+    }
 }
 
 extension PortalDataBridge: WKScriptMessageHandler {
@@ -170,13 +326,10 @@ extension PortalDataBridge: WKScriptMessageHandler {
             let body = payload["body"] as? String ?? ""
             let status = payload["status"] as? Int ?? 0
             guard status >= 200, status < 400, !body.isEmpty else { return }
-            // Priorizar APIs / JSON.
             if url.localizedCaseInsensitiveContains("OvServiceHub")
-                || url.localizedCaseInsensitiveContains("odata")
-                || url.localizedCaseInsensitiveContains("factura")
-                || url.localizedCaseInsensitiveContains("invoice")
-                || url.localizedCaseInsensitiveContains("consumo")
-                || url.localizedCaseInsensitiveContains("account")
+                || url.localizedCaseInsensitiveContains("publicbilling")
+                || url.localizedCaseInsensitiveContains("publicinvoice")
+                || url.localizedCaseInsensitiveContains("consumption")
                 || body.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{")
                 || body.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("[") {
                 captured.append((url, body))
@@ -185,28 +338,36 @@ extension PortalDataBridge: WKScriptMessageHandler {
             if let text = payload["text"] as? String, text.count > domText.count {
                 domText = text
             }
-        } else if type == "ready" {
-            // Tras el shell, intentar también el sitio mobile.
+        } else if type == "ready" || type == "pageReady" {
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 6_000_000_000)
-                if let webView, !(webView.url?.absoluteString.contains("ovmetrogasmobile") ?? false) {
-                    webView.load(URLRequest(url: MetrogasURLs.portalMobile))
-                }
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                triggerAPISyncIfNeeded()
             }
+        } else if type == "syncDone" {
+            Task { await completeIfNeeded() }
         }
 
-        // Completar temprano si ya hay facturas parseables.
         let early = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
-        if !early.invoices.isEmpty || (!early.readings.isEmpty && early.account.customerNumber != "—") {
-            Task { await completeIfNeeded() }
+        let hasBilling = captured.contains { $0.url.localizedCaseInsensitiveContains("publicbilling") }
+        let hasInvoices = !early.invoices.isEmpty
+        let hasReadings = !early.readings.isEmpty
+        // Esperar al menos deuda o facturas; si ya hay ambos (o consumo), cerrar.
+        if hasInvoices && (hasBilling || hasReadings || early.account.holderName.isEmpty == false) {
+            // No cerrar demasiado temprano: aún puede faltar consumption.
+            if hasInvoices && hasReadings {
+                Task { await completeIfNeeded() }
+            }
         }
     }
 }
 
 extension PortalDataBridge: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // Re-inyectar por si el document start no corrió en algún frame.
         webView.evaluateJavaScript(Self.hookScript, completionHandler: nil)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            triggerAPISyncIfNeeded()
+        }
     }
 }
 
@@ -225,12 +386,8 @@ enum PortalPayloadParser {
         for item in payloads {
             guard let data = item.body.data(using: .utf8) else { continue }
             let parsed = MetrogasJSONParser.parse(data)
-            if invoices.isEmpty || parsed.invoices.count > invoices.count {
-                invoices = mergeInvoices(invoices, parsed.invoices)
-            }
-            if readings.isEmpty || parsed.readings.count > readings.count {
-                readings = mergeReadings(readings, parsed.readings)
-            }
+            invoices = mergeInvoices(invoices, parsed.invoices)
+            readings = mergeReadings(readings, parsed.readings)
             account = MetrogasJSONParser.mergeAccount(account, parsed.account)
         }
 

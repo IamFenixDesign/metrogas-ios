@@ -17,7 +17,7 @@ open Metrogas.xcodeproj
 ```
 
 1. Ingresá con **email/contraseña** o **Continuar con Google** (abre solo el login de Google).
-2. La app sincroniza facturas/consumo/cuenta con la sesión de Oficina Virtual.
+2. Ingresá tu **N° de cliente de 11 dígitos** (en Inicio o Cuenta) para sincronizar facturas, saldo y consumo.
 3. Usá las pestañas nativas: Inicio, Facturas, Consumo, Cuenta.
 
 ## IPA
@@ -32,9 +32,9 @@ El IPA por defecto es **unsigned**. Firma: `ci/SIGNING_SECRETS.md`.
 MetroGAS no publica una API abierta. Esta app:
 
 1. Autentica de forma nativa contra SAP Identity (email/contraseña) o Google OAuth.
-2. Sincroniza contra **OvServiceHub (M360)** y, si hace falta, captura las respuestas reales del portal UI5 (bridge oculto) para llenar pantallas SwiftUI.
-3. Cachea el último sync en el dispositivo.
-4. Al cerrar sesión, borra cookies y caché local.
+2. Con el N° de cliente, consulta **saldos.micuenta** (OvServiceHub M360: `publicbilling/r2`, `listR2`, `consumption`) vía un bridge oculto con reCAPTCHA.
+3. Cachea el último sync y el N° de cliente en el dispositivo.
+4. Al cerrar sesión, borra cookies y caché local (conserva el N° de cliente).
 
 WebViews: sheet de **Continuar con Google** (OAuth) y un bridge oculto solo para sync de datos (la UI sigue nativa).
 

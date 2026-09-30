@@ -10,103 +10,87 @@ enum MetrogasJSONParser {
             return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
         }
 
-        for array in collectArrays(from: root) {
-            let asInvoices = array.compactMap { parseInvoice(from: $0) }
-            if asInvoices.count > invoices.count { invoices = asInvoices }
+        // Respuestas M360 conocidas (saldos.micuenta).
+        if let dict = root as? [String: Any] {
+            let m360 = parseM360Envelope(dict)
+            invoices = m360.invoices
+            readings = m360.readings
+            account = mergeAccount(account, m360.account)
+        }
 
-            let asReadings = array.compactMap { parseReading(from: $0) }
-            if asReadings.count > readings.count { readings = asReadings }
-
-            for item in array {
-                if let dict = item as? [String: Any] {
-                    account = mergeAccount(account, parseAccount(from: dict))
+        if invoices.isEmpty || readings.isEmpty {
+            for array in collectArrays(from: root) {
+                let asInvoices = array.compactMap { parseInvoice(from: $0) }
+                if asInvoices.count > invoices.count { invoices = asInvoices }
+                let asReadings = array.compactMap { parseReading(from: $0) }
+                if asReadings.count > readings.count { readings = asReadings }
+                for item in array {
+                    if let dict = item as? [String: Any] {
+                        account = mergeAccount(account, parseAccount(from: dict))
+                    }
                 }
             }
         }
 
         if let dict = root as? [String: Any] {
             account = mergeAccount(account, parseAccount(from: dict))
-            if let d = dict["d"] as? [String: Any] {
-                account = mergeAccount(account, parseAccount(from: d))
-            }
-            // M360 envelopes comunes
-            for key in ["data", "result", "results", "payload", "response", "body"] {
-                if let nested = dict[key] {
-                    let nestedData = (try? JSONSerialization.data(withJSONObject: nested)).flatMap { parse($0) }
-                    if let nestedData {
-                        if invoices.isEmpty { invoices = nestedData.invoices }
-                        if readings.isEmpty { readings = nestedData.readings }
-                        account = mergeAccount(account, nestedData.account)
-                    }
-                }
-            }
         }
 
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
     }
 
-    static func parseDOMText(_ text: String) -> MetrogasDataSnapshot {
-        var invoices: [Invoice] = []
+    /// Parsea las formas reales de OvServiceHub M360.
+    static func parseM360Envelope(_ dict: [String: Any]) -> MetrogasDataSnapshot {
         var account = AccountProfile.empty
+        var invoices: [Invoice] = []
+        var readings: [ConsumptionReading] = []
 
-        if let customer = firstMatch(text, #"(?:N[°º]?\s*(?:de\s*)?cliente|Cliente)\s*[:#]?\s*([0-9]{6,})"#) {
+        // publicinvoice/listR2 → { ISU: [...], IPOST: [...] }
+        if let isu = dict["ISU"] as? [[String: Any]] {
+            invoices.append(contentsOf: isu.compactMap { parseM360Invoice($0) })
+        }
+        if let ipost = dict["IPOST"] as? [[String: Any]] {
+            for row in ipost {
+                if let inv = parseM360IPost(row) { invoices.append(inv) }
+            }
+        }
+
+        // publicbilling/r2 → info + deudas + status
+        if let info = dict["info"] as? [String: Any] {
+            account = mergeAccount(account, parseM360Info(info))
+        }
+        if let deudas = dict["deudas"] as? [String: Any],
+           let items = deudas["items"] as? [[String: Any]] {
+            for item in items {
+                if let inv = parseM360DebtItem(item) { invoices.append(inv) }
+            }
+        }
+
+        // publicinvoice/consumption/{id} → { PTE_CONSUMOS: [...] }
+        if let consumos = dict["PTE_CONSUMOS"] as? [[String: Any]] {
+            readings = consumos.compactMap { parseM360Consumption($0) }
+        }
+
+        // Dedup invoices by id
+        var map: [String: Invoice] = [:]
+        for inv in invoices { map[inv.id] = inv }
+        invoices = Array(map.values).sorted { $0.dueDate > $1.dueDate }
+
+        return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+    }
+
+    static func parseDOMText(_ text: String) -> MetrogasDataSnapshot {
+        var account = AccountProfile.empty
+        if let customer = firstMatch(text, #"(?:N[°º]?\s*(?:de\s*)?cliente|Cliente)\s*[:#]?\s*([0-9]{11})"#) {
+            account.customerNumber = customer
+        } else if let customer = firstMatch(text, #"\b([0-9]{11})\b"#) {
+            // fallback: primer bloque de 11 dígitos en pantalla saldos/portal
             account.customerNumber = customer
         }
         if let meter = firstMatch(text, #"(?:Medidor|N[°º]?\s*medidor)\s*[:#]?\s*([A-Za-z0-9-]{4,})"#) {
             account.meterNumber = meter
         }
-
-        let amountPattern = #"\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})|[0-9]+(?:,[0-9]{2})?)"#
-        let datePattern = #"(\d{1,2}/\d{1,2}/\d{4})"#
-        guard let amountRegex = try? NSRegularExpression(pattern: amountPattern),
-              let dateRegex = try? NSRegularExpression(pattern: datePattern) else {
-            return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
-        }
-
-        let ns = text as NSString
-        let amounts = amountRegex.matches(in: text, range: NSRange(location: 0, length: ns.length))
-        let dates = dateRegex.matches(in: text, range: NSRange(location: 0, length: ns.length))
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "es_AR")
-        formatter.dateFormat = "dd/MM/yyyy"
-
-        let limit = min(amounts.count, max(dates.count, 1), 30)
-        for i in 0..<min(amounts.count, 30) {
-            let amountText = ns.substring(with: amounts[i].range(at: 1))
-                .replacingOccurrences(of: ".", with: "")
-                .replacingOccurrences(of: ",", with: ".")
-            guard let amount = Decimal(string: amountText) else { continue }
-            let due: Date
-            if i < dates.count, let d = formatter.date(from: ns.substring(with: dates[i].range(at: 1))) {
-                due = d
-            } else {
-                due = Calendar.current.date(byAdding: .day, value: 10, to: Date()) ?? Date()
-            }
-            let id = "OV-\(i + 1)-\(Int(due.timeIntervalSince1970))"
-            let status: InvoiceStatus = due < Date() ? .overdue : .pending
-            // Evitar montos absurdos de UI chrome
-            let asDouble = NSDecimalNumber(decimal: amount).doubleValue
-            guard asDouble > 100, asDouble < 50_000_000 else { continue }
-            invoices.append(
-                Invoice(
-                    id: id,
-                    number: id,
-                    periodStart: Calendar.current.date(byAdding: .month, value: -1, to: due) ?? due,
-                    periodEnd: due,
-                    dueDate: due,
-                    issuedDate: due,
-                    amountARS: amount,
-                    status: status,
-                    consumptionM3: 0,
-                    supplyPoint: "MetroGAS",
-                    notes: "",
-                    breakdown: InvoiceBreakdown(cargoFijo: 0, cargoVariable: amount, impuestos: 0, otros: 0)
-                )
-            )
-            if invoices.count >= limit { break }
-        }
-
-        return MetrogasDataSnapshot(account: account, invoices: invoices, readings: deriveReadings(from: invoices))
+        return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
     }
 
     static func deriveReadings(from invoices: [Invoice]) -> [ConsumptionReading] {
@@ -146,7 +130,127 @@ enum MetrogasJSONParser {
         )
     }
 
-    // MARK: - Internals
+    // MARK: - M360 field mappers
+
+    private static func parseM360Invoice(_ dict: [String: Any]) -> Invoice? {
+        let number = stringValue(dict, keys: ["NUMERO_FACTURA", "NRO_FACTURA", "nro_factura"]) 
+        let amount = decimalValue(dict, keys: ["MONTO_TOTAL", "IMPORTE_PENDIENTE", "TOTALAPAGAR", "importe"])
+        let due = dateValue(dict, keys: ["FECHA_VENCIMIENTO", "vencimiento", "FECHA_VTO"])
+        let issued = dateValue(dict, keys: ["FECHA_FACTURA", "FECHA_EMISION"]) ?? due
+        let start = dateValue(dict, keys: ["FECHA_LEC_ANTERIOR"]) ?? issued ?? Date()
+        let end = dateValue(dict, keys: ["FECHA_LEC_ACTUAL"]) ?? start
+        let m3 = doubleValue(dict, keys: ["CONSUMO", "M3", "CONSUMO_PERIODO"]) ?? 0
+        let statusRaw = (stringValue(dict, keys: ["ESTADO", "estado"]) ?? "").lowercased()
+        let pending = decimalValue(dict, keys: ["IMPORTE_PENDIENTE"])
+
+        guard let amount else { return nil }
+        let dueDate = due ?? issued ?? Date()
+        let id = number ?? "F-\(Int(dueDate.timeIntervalSince1970))"
+
+        let status: InvoiceStatus
+        if let pending, pending <= 0 { status = .paid }
+        else if statusRaw.contains("pag") || statusRaw.contains("saldad") { status = .paid }
+        else if dueDate < Calendar.current.startOfDay(for: Date()) { status = .overdue }
+        else { status = .pending }
+
+        return Invoice(
+            id: id,
+            number: number ?? id,
+            periodStart: start,
+            periodEnd: end,
+            dueDate: dueDate,
+            issuedDate: issued ?? dueDate,
+            amountARS: pending ?? amount,
+            status: status,
+            consumptionM3: m3,
+            supplyPoint: "MetroGAS",
+            notes: "",
+            breakdown: InvoiceBreakdown(cargoFijo: 0, cargoVariable: amount, impuestos: 0, otros: 0)
+        )
+    }
+
+    private static func parseM360IPost(_ dict: [String: Any]) -> Invoice? {
+        // IPOST: CUENTA, FECHA_EMISION, PERIODO_CONSUMO "dd/MM/yyyy - dd/MM/yyyy", M3, TOTALAPAGAR
+        var mapped = dict
+        if let cuenta = stringValue(dict, keys: ["CUENTA"]), cuenta.count >= 11 {
+            mapped["NUMERO_FACTURA"] = String(cuenta.suffix(11))
+        }
+        if let periodo = stringValue(dict, keys: ["PERIODO_CONSUMO"]), periodo.count >= 23 {
+            let start = String(periodo.prefix(10))
+            let end = String(periodo.suffix(10))
+            mapped["FECHA_LEC_ANTERIOR"] = start
+            mapped["FECHA_LEC_ACTUAL"] = end
+        }
+        if mapped["FECHA_FACTURA"] == nil {
+            mapped["FECHA_FACTURA"] = dict["FECHA_EMISION"]
+        }
+        mapped["MONTO_TOTAL"] = dict["TOTALAPAGAR"] ?? dict["MONTO_TOTAL"]
+        mapped["CONSUMO"] = dict["M3"] ?? dict["CONSUMO"]
+        return parseM360Invoice(mapped)
+    }
+
+    private static func parseM360DebtItem(_ dict: [String: Any]) -> Invoice? {
+        // deudas.items: codigo, importe, vencimiento, ...
+        let codigo = stringValue(dict, keys: ["codigo", "nro_factura"]) ?? ""
+        if codigo.uppercased().contains("PP") { return nil } // plan de pagos
+        var mapped = dict
+        if let n = dict["nro_factura"] {
+            mapped["NUMERO_FACTURA"] = n
+        } else if codigo.count >= 6 {
+            mapped["NUMERO_FACTURA"] = codigo
+        }
+        mapped["MONTO_TOTAL"] = dict["importe"] ?? dict["MONTO_TOTAL"]
+        mapped["FECHA_VENCIMIENTO"] = dict["vencimiento"] ?? dict["FECHA_VENCIMIENTO"]
+        mapped["IMPORTE_PENDIENTE"] = dict["importe"]
+        mapped["ESTADO"] = "Pendiente"
+        return parseM360Invoice(mapped)
+    }
+
+    private static func parseM360Info(_ info: [String: Any]) -> AccountProfile {
+        var meter = "—"
+        if let meters = info["meters"] as? [[String: Any]],
+           let first = meters.first,
+           let n = stringValue(first, keys: ["NRO_MEDIDOR", "nro_medidor"]) {
+            meter = n
+        }
+        let customer = stringValue(info, keys: ["PVE_NRO_CLIENTE", "NRO_CLIENTE", "accountId", "custNumber", "CUENTA"]) ?? "—"
+        return AccountProfile(
+            holderName: stringValue(info, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE"]) ?? "",
+            customerNumber: MetrogasURLs.normalizedCustomerNumber(customer) ?? customer,
+            supplyAddress: stringValue(info, keys: ["PVE_DIRECCION", "direccion"]) ?? "—",
+            locality: stringValue(info, keys: ["PVE_LOCALIDAD", "localidad"]) ?? "—",
+            postalCode: stringValue(info, keys: ["PVE_CP", "cp"]) ?? "—",
+            email: stringValue(info, keys: ["PVE_EMAIL", "email"]) ?? "",
+            phone: stringValue(info, keys: ["PVE_TELEFONO", "telefono"]) ?? "—",
+            meterNumber: meter,
+            tariffCategory: stringValue(info, keys: ["PVE_TARIFA", "categoria", "tarifa"]) ?? "—"
+        )
+    }
+
+    private static func parseM360Consumption(_ dict: [String: Any]) -> ConsumptionReading? {
+        let m3 = doubleValue(dict, keys: ["CONSUMO_PERIODO", "CONSUMO", "M3"])
+        guard let m3 else { return nil }
+
+        let year = Int(stringValue(dict, keys: ["ANO_PERIODO"]) ?? "") ?? Calendar.current.component(.year, from: Date())
+        let periodNum = Int(stringValue(dict, keys: ["NUMERO_PERIODO"]) ?? "") ?? 1
+        // bimestres ≈ 2 meses; aproximamos mes = period*2-1
+        let month = min(max(periodNum * 2 - 1, 1), 12)
+        let start = Calendar.metrogasDate(year: year, month: month, day: 1)
+        let end = Calendar.current.date(byAdding: DateComponents(month: 2, day: -1), to: start) ?? start
+        let prev = doubleValue(dict, keys: ["CONSUMO_PERIODO_ANO_ANTERIOR"]) ?? 0
+        let delta = prev > 0 ? ((m3 - prev) / prev) * 100 : 0
+        let days = Double(Calendar.current.dateComponents([.day], from: start, to: end).day ?? 60) + 1
+        return ConsumptionReading(
+            id: UUID(),
+            periodStart: start,
+            periodEnd: end,
+            cubicMeters: m3,
+            averageDaily: m3 / max(days, 1),
+            comparedToPreviousPercent: delta
+        )
+    }
+
+    // MARK: - Generic helpers
 
     private static func prefer(_ a: String, _ b: String) -> String {
         let bad: Set<String> = ["", "—", "-"]
@@ -167,104 +271,54 @@ enum MetrogasJSONParser {
     }
 
     private static func parseInvoice(from node: Any) -> Invoice? {
-        guard let dict = flatten(node) else { return nil }
-        let number = stringValue(dict, keys: [
-            "number", "InvoiceNumber", "NroFactura", "Factura", "DocNumber", "Belnr",
-            "id", "ID", "invoiceId", "billNumber", "nroComprobante", "PrintDoc"
-        ])
-        let amount = decimalValue(dict, keys: [
-            "amountARS", "Amount", "Importe", "Total", "GrossAmount", "OpenAmount",
-            "Dmbtr", "totalAmount", "amount", "saldo", "balance", "openBalance"
-        ])
-        let due = dateValue(dict, keys: [
-            "dueDate", "DueDate", "Vencimiento", "FechaVto", "NetDueDate", "due", "fechaVencimiento"
-        ])
-        let issued = dateValue(dict, keys: [
-            "issuedDate", "IssueDate", "FechaEmision", "BillingDate", "fechaEmision"
-        ]) ?? due
-        let start = dateValue(dict, keys: ["periodStart", "PeriodStart", "FechaDesde", "fromDate"]) ?? issued ?? Date()
-        let end = dateValue(dict, keys: ["periodEnd", "PeriodEnd", "FechaHasta", "toDate"]) ?? start
-        let m3 = doubleValue(dict, keys: ["consumptionM3", "Consumo", "Consumption", "M3", "Quantity", "volumen"]) ?? 0
-        let statusRaw = stringValue(dict, keys: ["status", "Status", "Estado", "ClearingStatus", "state"])?.lowercased() ?? ""
-
+        guard let dict = node as? [String: Any] else { return nil }
+        if let m360 = parseM360Invoice(dict) { return m360 }
+        let number = stringValue(dict, keys: ["number", "InvoiceNumber", "NroFactura", "Factura", "id", "ID"])
+        let amount = decimalValue(dict, keys: ["amountARS", "Amount", "Importe", "Total", "amount", "saldo"])
+        let due = dateValue(dict, keys: ["dueDate", "DueDate", "Vencimiento", "due"])
+        let issued = dateValue(dict, keys: ["issuedDate", "IssueDate", "FechaEmision"]) ?? due
         guard let amount, let dueDate = due ?? issued else { return nil }
-        let id = number ?? "F-\(Int(dueDate.timeIntervalSince1970))-\(amount)"
-
-        let status: InvoiceStatus
-        if statusRaw.contains("pag") || statusRaw.contains("paid") || statusRaw.contains("clear") || statusRaw.contains("saldad") {
-            status = .paid
-        } else if dueDate < Calendar.current.startOfDay(for: Date()) {
-            status = .overdue
-        } else if statusRaw.contains("venc") || statusRaw.contains("over") {
-            status = .overdue
-        } else {
-            status = .pending
-        }
-
+        let id = number ?? "F-\(Int(dueDate.timeIntervalSince1970))"
         return Invoice(
-            id: id,
-            number: number ?? id,
-            periodStart: start,
-            periodEnd: end,
-            dueDate: dueDate,
-            issuedDate: issued ?? dueDate,
-            amountARS: amount,
-            status: status,
-            consumptionM3: m3,
-            supplyPoint: stringValue(dict, keys: ["supplyPoint", "Address", "Direccion", "address"]) ?? "MetroGAS",
-            notes: stringValue(dict, keys: ["notes", "Notes", "Observaciones"]) ?? "",
-            breakdown: InvoiceBreakdown(
-                cargoFijo: decimalValue(dict, keys: ["cargoFijo", "FixedCharge"]) ?? 0,
-                cargoVariable: decimalValue(dict, keys: ["cargoVariable", "VariableCharge"]) ?? amount,
-                impuestos: decimalValue(dict, keys: ["impuestos", "Tax"]) ?? 0,
-                otros: decimalValue(dict, keys: ["otros", "Other"]) ?? 0
-            )
+            id: id, number: number ?? id,
+            periodStart: issued ?? dueDate, periodEnd: dueDate,
+            dueDate: dueDate, issuedDate: issued ?? dueDate,
+            amountARS: amount, status: dueDate < Date() ? .overdue : .pending,
+            consumptionM3: doubleValue(dict, keys: ["consumptionM3", "Consumo", "M3"]) ?? 0,
+            supplyPoint: "MetroGAS", notes: "",
+            breakdown: InvoiceBreakdown(cargoFijo: 0, cargoVariable: amount, impuestos: 0, otros: 0)
         )
     }
 
     private static func parseReading(from node: Any) -> ConsumptionReading? {
-        guard let dict = flatten(node) else { return nil }
-        let m3 = doubleValue(dict, keys: ["cubicMeters", "Consumo", "Consumption", "M3", "Quantity", "Volume", "volumen", "usage"])
-        let start = dateValue(dict, keys: ["periodStart", "PeriodStart", "FechaDesde", "Month", "fromDate", "period"])
+        if let dict = node as? [String: Any], let m360 = parseM360Consumption(dict) { return m360 }
+        guard let dict = node as? [String: Any] else { return nil }
+        let m3 = doubleValue(dict, keys: ["cubicMeters", "Consumo", "M3", "Quantity"])
+        let start = dateValue(dict, keys: ["periodStart", "FechaDesde", "period"])
         guard let m3, let start else { return nil }
-        let end = dateValue(dict, keys: ["periodEnd", "PeriodEnd", "FechaHasta", "toDate"])
-            ?? Calendar.current.date(byAdding: DateComponents(month: 1, day: -1), to: start)
-            ?? start
+        let end = dateValue(dict, keys: ["periodEnd", "FechaHasta"]) ?? start
         let days = Double(Calendar.current.dateComponents([.day], from: start, to: end).day ?? 30) + 1
-        let delta = doubleValue(dict, keys: ["comparedToPreviousPercent", "Delta", "Variacion", "variation"]) ?? 0
         return ConsumptionReading(
-            id: UUID(),
-            periodStart: start,
-            periodEnd: end,
-            cubicMeters: m3,
-            averageDaily: m3 / max(days, 1),
-            comparedToPreviousPercent: delta
+            id: UUID(), periodStart: start, periodEnd: end, cubicMeters: m3,
+            averageDaily: m3 / max(days, 1), comparedToPreviousPercent: 0
         )
     }
 
     private static func parseAccount(from dict: [String: Any]) -> AccountProfile {
-        let flat = flatten(dict) ?? dict
-        return AccountProfile(
-            holderName: stringValue(flat, keys: ["holderName", "Name", "Nombre", "CustomerName", "BpName", "fullName", "displayName", "firstname", "firstName"]) ?? "",
-            customerNumber: stringValue(flat, keys: ["customerNumber", "Customer", "NroCliente", "BusinessPartner", "Partner", "bPartner", "bp", "accountNumber", "nroCuenta"]) ?? "—",
-            supplyAddress: stringValue(flat, keys: ["supplyAddress", "Address", "Direccion", "Street", "street", "address"]) ?? "—",
-            locality: stringValue(flat, keys: ["locality", "City", "Localidad", "city"]) ?? "—",
-            postalCode: stringValue(flat, keys: ["postalCode", "PostalCode", "CP", "zip"]) ?? "—",
-            email: stringValue(flat, keys: ["email", "Email", "Mail"]) ?? "",
-            phone: stringValue(flat, keys: ["phone", "Phone", "Telefono", "telNumber"]) ?? "—",
-            meterNumber: stringValue(flat, keys: ["meterNumber", "Meter", "Medidor", "SerialNumber", "anlage", "device"]) ?? "—",
-            tariffCategory: stringValue(flat, keys: ["tariffCategory", "Tariff", "Categoria", "RateCategory", "tarifa"]) ?? "—"
-        )
-    }
-
-    private static func flatten(_ node: Any) -> [String: Any]? {
-        guard let dict = node as? [String: Any] else { return nil }
-        var out = dict
-        // OData V2 often wraps properties
-        if let results = dict["results"] as? [String: Any] {
-            out.merge(results) { _, new in new }
+        if dict["PVE_DIRECCION"] != nil || dict["meters"] != nil {
+            return parseM360Info(dict)
         }
-        return out
+        return AccountProfile(
+            holderName: stringValue(dict, keys: ["holderName", "Name", "Nombre", "PVE_TITULAR", "fullName"]) ?? "",
+            customerNumber: stringValue(dict, keys: ["customerNumber", "accountId", "NroCliente", "custNumber"]) ?? "—",
+            supplyAddress: stringValue(dict, keys: ["supplyAddress", "Address", "PVE_DIRECCION"]) ?? "—",
+            locality: stringValue(dict, keys: ["locality", "City", "PVE_LOCALIDAD"]) ?? "—",
+            postalCode: stringValue(dict, keys: ["postalCode", "PVE_CP"]) ?? "—",
+            email: stringValue(dict, keys: ["email", "Email"]) ?? "",
+            phone: stringValue(dict, keys: ["phone", "Telefono"]) ?? "—",
+            meterNumber: stringValue(dict, keys: ["meterNumber", "Medidor", "NRO_MEDIDOR"]) ?? "—",
+            tariffCategory: stringValue(dict, keys: ["tariffCategory", "Categoria"]) ?? "—"
+        )
     }
 
     private static func stringValue(_ dict: [String: Any], keys: [String]) -> String? {
@@ -276,13 +330,6 @@ enum MetrogasJSONParser {
                 if let value = pair.value as? NSNumber { return value.stringValue }
             }
         }
-        // firstname + lastname
-        if keys.contains("firstname") || keys.contains("firstName") {
-            let first = (dict["firstname"] as? String) ?? (dict["firstName"] as? String) ?? ""
-            let last = (dict["lastname"] as? String) ?? (dict["lastName"] as? String) ?? ""
-            let full = [first, last].filter { !$0.isEmpty }.joined(separator: " ")
-            if !full.isEmpty { return full }
-        }
         return nil
     }
 
@@ -290,8 +337,7 @@ enum MetrogasJSONParser {
         for key in keys {
             if let n = dict[key] as? NSNumber { return n.decimalValue }
             if let s = dict[key] as? String {
-                let normalized = s
-                    .replacingOccurrences(of: "$", with: "")
+                let normalized = s.replacingOccurrences(of: "$", with: "")
                     .replacingOccurrences(of: " ", with: "")
                     .replacingOccurrences(of: ".", with: "")
                     .replacingOccurrences(of: ",", with: ".")
@@ -320,7 +366,6 @@ enum MetrogasJSONParser {
             f.dateFormat = $0
             return f
         }
-
         for key in keys {
             let raw: Any? = dict[key] ?? dict.first(where: { $0.key.lowercased() == key.lowercased() })?.value
             if let date = raw as? Date { return date }

@@ -6,10 +6,8 @@ struct MetrogasDataSnapshot: Sendable {
     var readings: [ConsumptionReading]
 }
 
-/// Sincroniza datos reales de Oficina Virtual:
-/// 1) Establece sesión en portal + acceso
-/// 2) Consulta OvServiceHub (M360) por HTTP
-/// 3) Si hace falta, usa el bridge oculto del portal (captura XHR UI5)
+/// Sincroniza datos reales de “Tu Factura / Saldos” (OvServiceHub M360)
+/// usando el N° de cliente de 11 dígitos + bridge oculto (reCAPTCHA + XHR).
 actor MetrogasDataService {
     static let shared = MetrogasDataService()
 
@@ -24,52 +22,32 @@ actor MetrogasDataService {
         session = URLSession(configuration: config)
     }
 
-    func fetchAccountData(loginHint: String?) async throws -> MetrogasDataSnapshot {
-        var account = AccountProfile.empty
-        if let loginHint, !loginHint.isEmpty {
-            account.email = loginHint
-            let local = loginHint.split(separator: "@").first.map(String.init) ?? loginHint
-            account.holderName = local.replacingOccurrences(of: ".", with: " ").capitalized
+    func fetchAccountData(accountId: String, loginHint: String?) async throws -> MetrogasDataSnapshot {
+        guard let normalized = MetrogasURLs.normalizedCustomerNumber(accountId) else {
+            return MetrogasDataSnapshot(
+                account: seedAccount(loginHint: loginHint, customerNumber: accountId),
+                invoices: [],
+                readings: []
+            )
         }
 
-        // 1) Entrar a portal OV2 + acceso (renueva cookies SAML/portal).
-        _ = try await establishSiteSession(MetrogasURLs.portalOV2)
-        _ = try await establishSiteSession(MetrogasURLs.portalMobile)
-        _ = try await establishSiteSession(MetrogasURLs.accesoOV2)
-        _ = try await establishSiteSession(MetrogasURLs.acceso)
+        var account = seedAccount(loginHint: loginHint, customerNumber: normalized)
 
-        // 2) Probar Service Hub con la sesión.
-        var invoices: [Invoice] = []
-        var readings: [ConsumptionReading] = []
+        // Calentar sesión portal (opcional; saldos es público con captcha).
+        _ = try? await establishSiteSession(MetrogasURLs.portalOV2)
+        _ = try? await establishSiteSession(MetrogasURLs.saldos)
 
-        for url in MetrogasURLs.serviceHubCandidates {
-            guard let (data, response) = try? await getJSON(url) else { continue }
-            let http = response as? HTTPURLResponse
-            let mime = http?.mimeType ?? ""
-            let body = String(data: data, encoding: .utf8) ?? ""
-            // Ignorar HTML de login/SAML.
-            if mime.contains("html") || body.lowercased().contains("<html") {
-                continue
-            }
-            guard http?.statusCode == 200 || http?.statusCode == 206 else { continue }
+        let bridgeSnapshot = try await PortalDataBridge.shared.sync(
+            accountId: normalized,
+            loginHint: loginHint,
+            timeoutSeconds: 28
+        )
 
-            let parsed = MetrogasJSONParser.parse(data)
-            if !parsed.invoices.isEmpty {
-                invoices = mergeInvoices(invoices, parsed.invoices)
-            }
-            if !parsed.readings.isEmpty {
-                readings = mergeReadings(readings, parsed.readings)
-            }
-            account = MetrogasJSONParser.mergeAccount(account, parsed.account)
-        }
+        account = MetrogasJSONParser.mergeAccount(account, bridgeSnapshot.account)
+        account.customerNumber = normalized
 
-        // 3) Bridge del portal: captura las llamadas reales que hace la UI5/OvServiceHub.
-        if invoices.isEmpty {
-            let bridgeSnapshot = try await PortalDataBridge.shared.sync(loginHint: loginHint, timeoutSeconds: 18)
-            invoices = mergeInvoices(invoices, bridgeSnapshot.invoices)
-            readings = mergeReadings(readings, bridgeSnapshot.readings)
-            account = MetrogasJSONParser.mergeAccount(account, bridgeSnapshot.account)
-        }
+        var invoices = bridgeSnapshot.invoices
+        var readings = bridgeSnapshot.readings
 
         if readings.isEmpty && !invoices.isEmpty {
             readings = MetrogasJSONParser.deriveReadings(from: invoices)
@@ -78,14 +56,26 @@ actor MetrogasDataService {
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
     }
 
+    private func seedAccount(loginHint: String?, customerNumber: String) -> AccountProfile {
+        var account = AccountProfile.empty
+        account.customerNumber = MetrogasURLs.normalizedCustomerNumber(customerNumber) ?? customerNumber
+        if let loginHint, !loginHint.isEmpty {
+            account.email = loginHint
+            let local = loginHint.split(separator: "@").first.map(String.init) ?? loginHint
+            account.holderName = local.replacingOccurrences(of: ".", with: " ").capitalized
+        }
+        return account
+    }
+
     // MARK: - Session / HTTP
 
     @discardableResult
     private func establishSiteSession(_ start: URL) async throws -> String {
         var html = try await loadHTML(start)
-        for _ in 0..<5 {
+        for _ in 0..<4 {
             if looksAuthenticatedShell(html) { return html }
             if html.contains("j_username") || html.contains("j_password") { return html }
+            if html.lowercased().contains("sap-ui") { return html }
             guard let action = firstFormAction(in: html) else { break }
             let fields = extractFormFields(from: html)
             html = try await postHTML(action, fields: fields)
@@ -115,14 +105,6 @@ actor MetrogasDataService {
         return try await session.data(for: request)
     }
 
-    private func getJSON(_ url: URL) async throws -> (Data, URLResponse) {
-        var request = URLRequest(url: url)
-        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("application/json, application/vnd.api+json, */*", forHTTPHeaderField: "Accept")
-        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
-        return try await session.data(for: request)
-    }
-
     private static let userAgent =
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
@@ -143,7 +125,7 @@ actor MetrogasDataService {
         guard let inner = snippet.split(separator: "\"").dropFirst().first else { return nil }
         let raw = String(inner)
         if raw.hasPrefix("http") { return URL(string: raw) }
-        return URL(string: raw, relativeTo: URL(string: "https://portal.micuenta.metrogas.com.ar")!)?.absoluteURL
+        return URL(string: raw, relativeTo: URL(string: "https://saldos.micuenta.metrogas.com.ar")!)?.absoluteURL
     }
 
     private func extractFormFields(from html: String) -> [String: String] {
@@ -172,20 +154,6 @@ actor MetrogasDataService {
     private func looksAuthenticatedShell(_ html: String) -> Bool {
         let lowered = html.lowercased()
         return !lowered.contains("j_username")
-            && (lowered.contains("sap-ui") || lowered.contains("flp") || lowered.contains("ovmetrogas") || lowered.contains("shell"))
-    }
-
-    private func mergeInvoices(_ a: [Invoice], _ b: [Invoice]) -> [Invoice] {
-        var map: [String: Invoice] = [:]
-        for inv in a + b { map[inv.id] = inv }
-        return Array(map.values).sorted { $0.dueDate > $1.dueDate }
-    }
-
-    private func mergeReadings(_ a: [ConsumptionReading], _ b: [ConsumptionReading]) -> [ConsumptionReading] {
-        var seen = Set<String>()
-        return (a + b).filter { r in
-            let key = "\(r.periodStart.timeIntervalSince1970)-\(r.cubicMeters)"
-            return seen.insert(key).inserted
-        }.sorted { $0.periodStart < $1.periodStart }
+            && (lowered.contains("sap-ui") || lowered.contains("flp") || lowered.contains("ovmetrogas") || lowered.contains("shell") || lowered.contains("ovwebabierta"))
     }
 }

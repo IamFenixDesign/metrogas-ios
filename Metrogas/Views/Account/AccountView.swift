@@ -6,6 +6,7 @@ struct AccountView: View {
     @EnvironmentObject private var reminders: ReminderService
     @State private var showLogoutConfirm = false
     @State private var permissionMessage: String?
+    @State private var customerNumberError: String?
 
     var body: some View {
         NavigationStack {
@@ -21,6 +22,32 @@ struct AccountView: View {
                         }
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                    }
+
+                    Section {
+                        TextField("11 dígitos", text: $store.customerNumberDraft)
+                            .keyboardType(.numberPad)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.body.monospacedDigit())
+                        if let customerNumberError {
+                            Text(customerNumberError)
+                                .font(.caption)
+                                .foregroundStyle(MetrogasTheme.brandFlame)
+                        }
+                        Button("Guardar y sincronizar") {
+                            if store.saveCustomerNumber(store.customerNumberDraft) {
+                                customerNumberError = nil
+                                Task { await store.refresh(loginHint: session.loginEmail) }
+                            } else {
+                                customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
+                            }
+                        }
+                        .disabled(store.isLoading)
+                    } header: {
+                        Text("N° de cliente MetroGAS")
+                    } footer: {
+                        Text("Lo usamos para consultar facturas, saldo y consumo en Tu Factura / Saldos. Aparece en tu factura impresa o digital.")
                     }
 
                     Section("Suministro") {
