@@ -358,9 +358,7 @@ actor MetrogasAuthService {
     }
 
     private func submitLogin(html: String, email: String, password: String?) async throws -> String {
-        guard let action = firstFormAction(in: html) ?? MetrogasURLs.idpSSO else {
-            throw MetrogasAuthError.unexpectedResponse
-        }
+        let action = firstFormAction(in: html) ?? MetrogasURLs.idpSSO
 
         var fields = extractFormFields(from: html)
         fields["j_username"] = email
