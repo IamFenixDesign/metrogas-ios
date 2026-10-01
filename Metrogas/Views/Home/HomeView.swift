@@ -4,8 +4,8 @@ struct HomeView: View {
     @EnvironmentObject private var store: AccountDataStore
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var tabScroll: TabBarScrollState
-    @Environment(\.openURL) private var openURL
     @State private var appear = false
+    @State private var payBrowser: InAppBrowserDestination?
 
     private var resolvedCustomerNumber: String? {
         MetrogasURLs.normalizedCustomerNumber(session.customerNumber ?? "")
@@ -125,7 +125,9 @@ struct HomeView: View {
 
             if pending > 0, let customerNumber = resolvedCustomerNumber {
                 Button {
-                    openURL(MetrogasURLs.saldosPagar(accountId: customerNumber))
+                    payBrowser = InAppBrowserDestination(
+                        url: MetrogasURLs.saldosPagar(accountId: customerNumber)
+                    )
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "dollarsign.circle.fill")
@@ -133,7 +135,7 @@ struct HomeView: View {
                         Text("Pagar ahora")
                             .font(.headline)
                         Spacer()
-                        Image(systemName: "arrow.up.right")
+                        Image(systemName: "chevron.right")
                             .font(.subheadline.weight(.semibold))
                     }
                     .foregroundStyle(.white)
@@ -160,6 +162,9 @@ struct HomeView: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .liquidGlass(cornerRadius: 24, prominent: true)
+        .fullScreenCover(item: $payBrowser) { destination in
+            InAppBrowserSheet(url: destination.url, title: destination.title)
+        }
     }
 
     private var quickMetrics: some View {

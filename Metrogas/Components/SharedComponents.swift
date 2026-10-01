@@ -133,13 +133,13 @@ struct PressableGlassStyle: ButtonStyle {
     }
 }
 
-/// Medios de pago oficiales MetroGAS (abre la web de saldos `#/pagar/{N°}`).
+/// Medios de pago oficiales MetroGAS (abre `#/pagar/{N°}` dentro de la app).
 struct PaymentOptionsCard: View {
     let customerNumber: String
     var amountLabel: String? = nil
     var compact: Bool = false
 
-    @Environment(\.openURL) private var openURL
+    @State private var payBrowser: InAppBrowserDestination?
 
     private var payURL: URL {
         MetrogasURLs.saldosPagar(accountId: customerNumber)
@@ -163,7 +163,7 @@ struct PaymentOptionsCard: View {
             )
 
             Button {
-                openURL(payURL)
+                payBrowser = InAppBrowserDestination(url: payURL)
             } label: {
                 HStack {
                     Image(systemName: "dollarsign.circle.fill")
@@ -171,7 +171,7 @@ struct PaymentOptionsCard: View {
                     Text("Pagar ahora")
                         .font(.headline)
                     Spacer()
-                    Image(systemName: "arrow.up.right")
+                    Image(systemName: "chevron.right")
                         .font(.subheadline.weight(.semibold))
                 }
                 .foregroundStyle(.white)
@@ -195,7 +195,7 @@ struct PaymentOptionsCard: View {
                 VStack(spacing: 8) {
                     ForEach(options, id: \.title) { option in
                         Button {
-                            openURL(payURL)
+                            payBrowser = InAppBrowserDestination(url: payURL)
                         } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: option.icon)
@@ -230,13 +230,21 @@ struct PaymentOptionsCard: View {
                     }
                 }
 
-                Link("Más info sobre cómo pagar", destination: MetrogasURLs.comoPagar)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(MetrogasTheme.brandBlue)
+                Button("Más info sobre cómo pagar") {
+                    payBrowser = InAppBrowserDestination(
+                        url: MetrogasURLs.comoPagar,
+                        title: "Cómo pagar"
+                    )
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(MetrogasTheme.brandBlue)
             }
         }
         .padding(compact ? 0 : 18)
         .modifier(PaymentCardChrome(enabled: !compact))
+        .fullScreenCover(item: $payBrowser) { destination in
+            InAppBrowserSheet(url: destination.url, title: destination.title)
+        }
     }
 }
 
