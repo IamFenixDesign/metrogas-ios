@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var store: AccountDataStore
+    @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var tabScroll: TabBarScrollState
     @State private var appear = false
 
@@ -33,14 +34,27 @@ struct HomeView: View {
                 nextInvoiceCard
                     .appearMotion(visible: appear, index: 2)
 
-                UpcomingDueSection()
+                if let invoice = store.nextDueInvoice,
+                   let customerNumber = MetrogasURLs.normalizedCustomerNumber(session.customerNumber ?? "")
+                    ?? MetrogasURLs.normalizedCustomerNumber(store.account.customerNumber) {
+                    PaymentOptionsCard(
+                        customerNumber: customerNumber,
+                        amountLabel: Formatters.money(invoice.amountARS),
+                        compact: true
+                    )
+                    .padding(16)
+                    .liquidGlass(cornerRadius: 22)
                     .appearMotion(visible: appear, index: 3)
+                }
 
-                quickMetrics
+                UpcomingDueSection()
                     .appearMotion(visible: appear, index: 4)
 
-                recentActivity
+                quickMetrics
                     .appearMotion(visible: appear, index: 5)
+
+                recentActivity
+                    .appearMotion(visible: appear, index: 6)
 
                 Spacer(minLength: 0)
 

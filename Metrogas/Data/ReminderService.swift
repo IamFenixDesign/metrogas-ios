@@ -11,18 +11,29 @@ final class ReminderService: NSObject, ObservableObject {
             UserDefaults.standard.set(remindersEnabled, forKey: Keys.enabled)
         }
     }
+    /// Avisar cuando aparece una factura nueva tras sincronizar.
+    @Published var newInvoiceAlertsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(newInvoiceAlertsEnabled, forKey: Keys.newInvoiceAlerts)
+        }
+    }
     /// Días antes del vencimiento (1–7).
     @Published var daysBeforeDue: Int {
         didSet { UserDefaults.standard.set(daysBeforeDue, forKey: Keys.daysBefore) }
     }
+    @Published private(set) var lastTestNotificationAt: Date?
+    @Published var testNotificationMessage: String?
 
     private enum Keys {
         static let enabled = "metrogas.reminders.enabled"
         static let daysBefore = "metrogas.reminders.daysBefore"
+        static let newInvoiceAlerts = "metrogas.reminders.newInvoiceAlerts"
+        static let knownInvoiceIDs = "metrogas.reminders.knownInvoiceIDs"
     }
 
     override init() {
         remindersEnabled = UserDefaults.standard.object(forKey: Keys.enabled) as? Bool ?? true
+        newInvoiceAlertsEnabled = UserDefaults.standard.object(forKey: Keys.newInvoiceAlerts) as? Bool ?? true
         let stored = UserDefaults.standard.object(forKey: Keys.daysBefore) as? Int ?? 3
         daysBeforeDue = min(max(stored, 1), 7)
         super.init()
@@ -72,8 +83,12 @@ final class ReminderService: NSObject, ObservableObject {
 
     func reschedule(for invoices: [Invoice]) async {
         let center = UNUserNotificationCenter.current()
-        center.removeAllPendingNotificationRequests()
-        try? await center.setBadgeCount(0)
+        // Conservar notificaciones de “factura nueva” ya disparadas; limpia solo vencimientos.
+        let pending = await center.pendingNotificationRequests()
+        let dueIDs = pending
+            .map(\.identifier)
+            .filter { $0.hasPrefix("due-before-") || $0.hasPrefix("due-day-") }
+        center.removePendingNotificationRequests(withIdentifiers: dueIDs)
 
         guard remindersEnabled else { return }
         let granted = await requestPermissionIfNeeded()
@@ -110,6 +125,81 @@ final class ReminderService: NSObject, ObservableObject {
                 center: center
             )
         }
+    }
+
+    /// Detecta facturas nuevas tras un sync y manda notificación local.
+    /// La primera vez solo guarda el set (sin spamear el historial).
+    func notifyNewInvoices(from invoices: [Invoice]) async {
+        let currentIDs = Set(invoices.map(\.id))
+        let previous = Set(UserDefaults.standard.stringArray(forKey: Keys.knownInvoiceIDs) ?? [])
+        UserDefaults.standard.set(Array(currentIDs), forKey: Keys.knownInvoiceIDs)
+
+        guard newInvoiceAlertsEnabled else { return }
+        guard !previous.isEmpty else { return } // seed inicial
+
+        let freshIDs = currentIDs.subtracting(previous)
+        guard !freshIDs.isEmpty else { return }
+
+        let fresh = invoices
+            .filter { freshIDs.contains($0.id) }
+            .sorted { $0.issuedDate > $1.issuedDate }
+
+        let granted = await requestPermissionIfNeeded()
+        guard granted else { return }
+
+        if fresh.count == 1, let invoice = fresh.first {
+            await postImmediate(
+                id: "new-invoice-\(invoice.id)-\(Int(Date().timeIntervalSince1970))",
+                title: "Nueva factura MetroGAS",
+                body: "\(invoice.number) por \(Formatters.money(invoice.amountARS)). Vence el \(DateFormatter.metrogasDayMonthYear.string(from: invoice.dueDate))."
+            )
+        } else if let first = fresh.first {
+            await postImmediate(
+                id: "new-invoices-\(Int(Date().timeIntervalSince1970))",
+                title: "Nuevas facturas MetroGAS",
+                body: "Llegaron \(fresh.count) facturas. La más reciente es \(first.number) por \(Formatters.money(first.amountARS))."
+            )
+        }
+    }
+
+    /// Botón de prueba: dispara una notificación de “nueva factura” en 1 segundo.
+    func sendTestNewInvoiceNotification() async {
+        testNotificationMessage = nil
+        let granted = await requestPermissionIfNeeded()
+        guard granted else {
+            testNotificationMessage = "Activá las notificaciones en Ajustes → Metrogas."
+            return
+        }
+
+        await postImmediate(
+            id: "test-new-invoice-\(Int(Date().timeIntervalSince1970))",
+            title: "Nueva factura MetroGAS",
+            body: "Prueba: tenés una nueva factura disponible. Abrí la app para verla y pagarla.",
+            delaySeconds: 1
+        )
+        lastTestNotificationAt = Date()
+        testNotificationMessage = "Notificación de prueba enviada. Debería aparecer en ~1s."
+    }
+
+    private func postImmediate(
+        id: String,
+        title: String,
+        body: String,
+        delaySeconds: TimeInterval = 0.2
+    ) async {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.badge = NSNumber(value: 1)
+        content.categoryIdentifier = "NEW_INVOICE"
+
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: max(delaySeconds, 0.1),
+            repeats: false
+        )
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
+        try? await UNUserNotificationCenter.current().add(request)
     }
 
     private func schedule(

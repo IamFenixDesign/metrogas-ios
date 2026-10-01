@@ -3,6 +3,7 @@ import SwiftUI
 struct InvoiceListView: View {
     @EnvironmentObject private var store: AccountDataStore
     @EnvironmentObject private var session: AppSession
+    @EnvironmentObject private var reminders: ReminderService
     @EnvironmentObject private var tabScroll: TabBarScrollState
     @State private var appear = false
 
@@ -49,6 +50,8 @@ struct InvoiceListView: View {
                     customerNumber: session.customerNumber,
                     force: true
                 )
+                await reminders.reschedule(for: store.invoices)
+                await reminders.notifyNewInvoices(from: store.invoices)
             }
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }

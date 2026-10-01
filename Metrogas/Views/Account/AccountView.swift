@@ -47,6 +47,8 @@ struct AccountView: View {
                                     customerNumber: session.customerNumber,
                                     force: true
                                 )
+                                await reminders.reschedule(for: store.invoices)
+                                await reminders.notifyNewInvoices(from: store.invoices)
                             }
                         } else {
                             customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
@@ -96,13 +98,30 @@ struct AccountView: View {
                     .onChange(of: reminders.daysBeforeDue) { _, _ in
                         Task { await reminders.reschedule(for: store.invoices) }
                     }
+
+                    Toggle("Avisar factura nueva", isOn: $reminders.newInvoiceAlertsEnabled)
+                        .padding(.vertical, 4)
+
+                    Button {
+                        Task { await reminders.sendTestNewInvoiceNotification() }
+                    } label: {
+                        Label("Probar notificación de factura nueva", systemImage: "bell.badge.fill")
+                    }
+                    .padding(.vertical, 4)
+
+                    if let message = reminders.testNotificationMessage {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 2)
+                    }
                 } header: {
-                    Text("Recordatorios")
+                    Text("Notificaciones")
                 } footer: {
                     if reminders.authorizationStatus == .denied {
                         Text("Las notificaciones están desactivadas. Activalas en Ajustes → Metrogas → Notificaciones.")
                     } else {
-                        Text("Avisos nativos de iOS según tus facturas sincronizadas.")
+                        Text("Recordatorios de vencimiento y avisos cuando sincronizás una factura nueva. El botón de prueba dispara una notificación local en ~1s.")
                     }
                 }
                 .listRowBackground(glassListRow)

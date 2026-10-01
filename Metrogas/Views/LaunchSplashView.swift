@@ -112,6 +112,7 @@ struct RootContainerView: View {
             )
         }
         await reminders.reschedule(for: store.invoices)
+        await reminders.notifyNewInvoices(from: store.invoices)
     }
 
     private func bootstrapSessionAndData() async {
@@ -126,6 +127,7 @@ struct RootContainerView: View {
                     force: true
                 )
                 await reminders.reschedule(for: store.invoices)
+                await reminders.notifyNewInvoices(from: store.invoices)
             }
         }
 
