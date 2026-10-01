@@ -1,7 +1,9 @@
 import SwiftUI
 
-enum AppTab: Hashable, CaseIterable {
+enum AppTab: Hashable, CaseIterable, Identifiable {
     case home, invoices, consumption, account
+
+    var id: Self { self }
 
     var title: String {
         switch self {
@@ -20,6 +22,10 @@ enum AppTab: Hashable, CaseIterable {
         case .account: return "person.crop.circle.fill"
         }
     }
+
+    var index: Int {
+        Self.allCases.firstIndex(of: self) ?? 0
+    }
 }
 
 struct RootTabView: View {
@@ -29,30 +35,41 @@ struct RootTabView: View {
 
     private var isCompact: Bool { tabScroll.isCompact }
 
+    /// Spring corto para el pill del tab bar.
+    private var tabSpring: Animation {
+        .spring(response: 0.34, dampingFraction: 0.84, blendDuration: 0.12)
+    }
+
+    /// Crossfade del contenido entre tabs.
+    private var contentSpring: Animation {
+        .interactiveSpring(response: 0.30, dampingFraction: 0.90, blendDuration: 0.15)
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
-            Group {
-                switch selected {
-                case .home:
-                    HomeView()
-                case .invoices:
-                    InvoiceListView()
-                case .consumption:
-                    ConsumptionView()
-                case .account:
-                    AccountView()
+            ZStack {
+                ForEach(AppTab.allCases) { tab in
+                    tabRoot(tab)
+                        .environment(\.metrogasTabActive, selected == tab)
+                        .opacity(selected == tab ? 1 : 0)
+                        .scaleEffect(selected == tab ? 1 : 0.992, anchor: .center)
+                        .offset(x: contentOffset(for: tab))
+                        .allowsHitTesting(selected == tab)
+                        .zIndex(selected == tab ? 1 : 0)
+                        .accessibilityHidden(selected != tab)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .environmentObject(tabScroll)
+            .animation(contentSpring, value: selected)
 
             glassTabBar
                 .padding(.horizontal, isCompact ? 40 : 20)
                 .padding(.bottom, isCompact ? 6 : 8)
                 .allowsHitTesting(true)
+                .animation(tabSpring, value: isCompact)
         }
-        .animation(.spring(response: 0.32, dampingFraction: 0.88), value: isCompact)
-        .animation(MetrogasTheme.springSoft, value: selected)
+        .sensoryFeedback(.selection, trigger: selected)
         .onAppear {
             TabBarScrollState.shared = tabScroll
         }
@@ -62,9 +79,29 @@ struct RootTabView: View {
         }
     }
 
+    @ViewBuilder
+    private func tabRoot(_ tab: AppTab) -> some View {
+        switch tab {
+        case .home:
+            HomeView()
+        case .invoices:
+            InvoiceListView()
+        case .consumption:
+            ConsumptionView()
+        case .account:
+            AccountView()
+        }
+    }
+
+    private func contentOffset(for tab: AppTab) -> CGFloat {
+        guard selected != tab else { return 0 }
+        let delta = tab.index - selected.index
+        return CGFloat(delta) * 10
+    }
+
     private var glassTabBar: some View {
         HStack(spacing: isCompact ? 2 : 4) {
-            ForEach(AppTab.allCases, id: \.self) { tab in
+            ForEach(AppTab.allCases) { tab in
                 tabButton(tab)
             }
         }
@@ -76,26 +113,32 @@ struct RootTabView: View {
     private func tabButton(_ tab: AppTab) -> some View {
         let isSelected = selected == tab
         return Button {
-            withAnimation(MetrogasTheme.springBouncy) {
+            guard selected != tab else { return }
+            withAnimation(tabSpring) {
                 selected = tab
-                tabScroll.reset()
             }
         } label: {
             VStack(spacing: isCompact ? 0 : 4) {
                 Image(systemName: tab.systemImage)
                     .font(.system(size: isCompact ? 16 : 18, weight: .semibold))
-                    .symbolEffect(.bounce, value: isSelected)
+                    .symbolEffect(.bounce, options: .speed(1.35), value: isSelected)
                     .frame(height: isCompact ? 18 : 22)
 
                 if !isCompact {
                     Text(tab.title)
                         .font(.caption2.weight(.semibold))
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .move(edge: .bottom)),
+                                removal: .opacity
+                            )
+                        )
                 }
             }
             .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.72))
             .frame(maxWidth: .infinity)
             .padding(.vertical, isCompact ? 8 : 10)
+            .contentShape(Rectangle())
             .background {
                 if isSelected {
                     Capsule(style: .continuous)
@@ -111,9 +154,19 @@ struct RootTabView: View {
                 }
             }
         }
-        .buttonStyle(PressableGlassStyle())
+        .buttonStyle(TabBarButtonStyle())
         .accessibilityLabel(tab.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Feedback de toque liviano: no pelea con el spring del pill.
+private struct TabBarButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .opacity(configuration.isPressed ? 0.88 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
