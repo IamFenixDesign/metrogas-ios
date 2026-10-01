@@ -104,11 +104,11 @@ enum MetrogasJSONParser {
         if dict["PVE_TITULAR"] != nil || dict["PVE_DIRECCION"] != nil || dict["meters"] != nil {
             account = mergeAccount(account, parseM360Info(dict))
         }
+        // Solo confiamos en “pagada” cuando MetroGAS mandó el bloque deudas (aunque esté vacío).
+        let billingDebtListPresent = dict["deudas"] != nil
         if let deudas = dict["deudas"] as? [String: Any],
            let items = deudas["items"] as? [[String: Any]] {
-            for item in items {
-                if let inv = parseM360DebtItem(item) { debts.append(inv) }
-            }
+            debts.append(contentsOf: parseM360DebtItems(items))
         }
 
         // publicinvoice/consumption/{id} → { PTE_CONSUMOS: [...] }
@@ -116,21 +116,162 @@ enum MetrogasJSONParser {
             readings = consumos.compactMap { parseM360Consumption($0) }
         }
 
-        // Base = historial (incluye pagadas); las deudas solo actualizan pendientes.
-        var map: [String: Invoice] = [:]
-        for inv in history { map[inv.id] = inv }
+        // Reconciliar contra deudas de billing: nunca marcar pagada sin evidencia MetroGAS.
+        let invoices = reconcileInvoices(
+            history: history,
+            debts: debts,
+            billingDebtListPresent: billingDebtListPresent
+        )
+        return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+    }
+
+    /// Une historial (listR2) con deudas (publicbilling). Una factura solo queda
+    /// **Pagada** si MetroGAS la confirma (fecha/estado de pago) o si el listado de
+    /// deudas está presente y esa factura **no** aparece ahí.
+    static func reconcileInvoices(
+        history: [Invoice],
+        debts: [Invoice],
+        billingDebtListPresent: Bool
+    ) -> [Invoice] {
+        var debtByKey: [String: Invoice] = [:]
         for debt in debts {
-            if var existing = map[debt.id] {
-                existing.status = debt.status
-                existing.amountARS = debt.amountARS
-                map[debt.id] = existing
-            } else {
-                map[debt.id] = debt
+            for key in invoiceMatchKeys(debt) {
+                debtByKey[key] = debt
             }
         }
 
-        let invoices = Array(map.values).sorted { $0.dueDate > $1.dueDate }
-        return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+        var map: [String: Invoice] = [:]
+        var claimedDebtIDs = Set<String>()
+
+        for item in history {
+            var invoice = item
+            if let debt = firstDebt(matching: invoice, in: debtByKey) {
+                invoice.status = debt.status
+                invoice.amountARS = debt.amountARS > 0 ? debt.amountARS : invoice.amountARS
+                claimedDebtIDs.insert(debt.id)
+            } else if billingDebtListPresent {
+                // Billing dice que no está en deudas → pagada en la web de saldos.
+                invoice.status = .paid
+            }
+            // Sin listado de deudas: respetar estado del parse (solo pagada con evidencia).
+            map[invoice.id] = preferInvoice(map[invoice.id], invoice)
+        }
+
+        for debt in debts where !claimedDebtIDs.contains(debt.id) {
+            let already = map.values.contains { existing in
+                !Set(invoiceMatchKeys(existing)).isDisjoint(with: invoiceMatchKeys(debt))
+            }
+            if !already {
+                map[debt.id] = preferInvoice(map[debt.id], debt)
+            }
+        }
+
+        return Array(map.values).sorted { $0.dueDate > $1.dueDate }
+    }
+
+    /// Merge entre payloads separados (listR2 + billing): prioriza deuda/impago.
+    static func mergeInvoiceLists(_ a: [Invoice], _ b: [Invoice]) -> [Invoice] {
+        let unpaid = (a + b).filter { $0.status == .pending || $0.status == .overdue }
+        if !unpaid.isEmpty {
+            // Hay deudas de billing (o pendientes explícitos): ellas mandan el estado.
+            return reconcileInvoices(
+                history: a + b,
+                debts: unpaid,
+                billingDebtListPresent: true
+            )
+        }
+        var map: [String: Invoice] = [:]
+        for inv in a + b {
+            map[inv.id] = preferInvoice(map[inv.id], inv)
+        }
+        return Array(map.values).sorted { $0.dueDate > $1.dueDate }
+    }
+
+    private static func firstDebt(matching invoice: Invoice, in debtByKey: [String: Invoice]) -> Invoice? {
+        for key in invoiceMatchKeys(invoice) {
+            if let debt = debtByKey[key] { return debt }
+        }
+        return nil
+    }
+
+    private static func invoiceMatchKeys(_ invoice: Invoice) -> [String] {
+        var keys: [String] = []
+        let id = invoice.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let number = invoice.number.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !id.isEmpty { keys.append(id.lowercased()) }
+        if !number.isEmpty { keys.append(number.lowercased()) }
+
+        let idDigits = id.filter(\.isNumber)
+        let numberDigits = number.filter(\.isNumber)
+        if idDigits.count >= 6 { keys.append("d:\(idDigits)") }
+        if numberDigits.count >= 6 { keys.append("d:\(numberDigits)") }
+        // Sufijos: codigo de deuda a veces trae prefijos distintos al N° de factura.
+        if idDigits.count >= 8 { keys.append("s:\(String(idDigits.suffix(8)))") }
+        if numberDigits.count >= 8 { keys.append("s:\(String(numberDigits.suffix(8)))") }
+
+        let day = Calendar.current.startOfDay(for: invoice.dueDate).timeIntervalSince1970
+        let amountKey = NSDecimalNumber(decimal: invoice.amountARS).stringValue
+        keys.append("due:\(Int(day))|\(amountKey)")
+
+        return Array(Set(keys))
+    }
+
+    private static func preferInvoice(_ existing: Invoice?, _ incoming: Invoice) -> Invoice {
+        guard let existing else { return incoming }
+        var result = existing
+
+        // Impago gana sobre pagada (billing/deudas manda).
+        if existing.status == .paid, incoming.status != .paid {
+            result = incoming
+            // Conservar periodo/consumo más ricos del historial si el de debt viene vacío.
+            if result.consumptionM3 == 0, existing.consumptionM3 > 0 {
+                result = Invoice(
+                    id: result.id,
+                    number: result.number.isEmpty ? existing.number : result.number,
+                    periodStart: existing.periodStart,
+                    periodEnd: existing.periodEnd,
+                    dueDate: result.dueDate,
+                    issuedDate: existing.issuedDate,
+                    amountARS: result.amountARS,
+                    status: result.status,
+                    consumptionM3: existing.consumptionM3,
+                    supplyPoint: existing.supplyPoint,
+                    notes: result.notes,
+                    breakdown: existing.breakdown
+                )
+            }
+            return result
+        }
+        if incoming.status == .paid, existing.status != .paid {
+            return existing
+        }
+        if incoming.status == .overdue, existing.status == .pending {
+            result.status = .overdue
+        }
+        if incoming.amountARS > 0, (existing.amountARS == 0 || incoming.status != .paid) {
+            result.amountARS = incoming.amountARS
+        }
+        if incoming.consumptionM3 > existing.consumptionM3 {
+            return Invoice(
+                id: result.id,
+                number: result.number,
+                periodStart: incoming.periodStart,
+                periodEnd: incoming.periodEnd,
+                dueDate: result.dueDate,
+                issuedDate: incoming.issuedDate,
+                amountARS: result.amountARS,
+                status: result.status,
+                consumptionM3: incoming.consumptionM3,
+                supplyPoint: result.supplyPoint,
+                notes: result.notes,
+                breakdown: incoming.breakdown
+            )
+        }
+        return result
+    }
+
+    private static func unpaidStatus(for dueDate: Date) -> InvoiceStatus {
+        dueDate < Calendar.current.startOfDay(for: Date()) ? .overdue : .pending
     }
 
     static func parseDOMText(_ text: String) -> MetrogasDataSnapshot {
@@ -306,22 +447,26 @@ enum MetrogasJSONParser {
 
         let status: InvoiceStatus
         if source == .debt {
-            status = dueDate < Calendar.current.startOfDay(for: Date()) ? .overdue : .pending
+            status = unpaidStatus(for: dueDate)
         } else if paidAt != nil {
-            status = .paid
-        } else if let pending, pending <= 0 {
+            // MetroGAS mandó fecha de pago.
             status = .paid
         } else if statusRaw.contains("pag") || statusRaw.contains("saldad") || statusRaw.contains("cancel") {
+            // Estado textual de la web/API.
+            status = .paid
+        } else if let pending, pending <= 0, total != nil {
+            // Importe pendiente en cero con total conocido → saldada.
             status = .paid
         } else if let pending, pending > 0 {
-            status = dueDate < Calendar.current.startOfDay(for: Date()) ? .overdue : .pending
+            status = unpaidStatus(for: dueDate)
         } else if statusRaw.contains("venc") || statusRaw.contains("deud") {
             status = .overdue
         } else if statusRaw.contains("pend") {
             status = .pending
         } else {
-            // Historial sin deuda explícita → pagada (como en la web de saldos).
-            status = .paid
+            // Sin evidencia de pago ni listado de deudas en este payload:
+            // NO asumir pagada (billing lo confirmará al reconciliar).
+            status = unpaidStatus(for: dueDate)
         }
 
         let displayAmount: Decimal
@@ -349,10 +494,8 @@ enum MetrogasJSONParser {
 
     private static func parseM360IPost(_ dict: [String: Any]) -> Invoice? {
         // IPOST: CUENTA, FECHA_EMISION, PERIODO_CONSUMO "dd/MM/yyyy - dd/MM/yyyy", M3, TOTALAPAGAR
+        // CUENTA es el N° de cliente, NO el de factura — no usarla como id.
         var mapped = dict
-        if let cuenta = stringValue(dict, keys: ["CUENTA"]), cuenta.count >= 11 {
-            mapped["NUMERO_FACTURA"] = String(cuenta.suffix(11))
-        }
         if let periodo = stringValue(dict, keys: ["PERIODO_CONSUMO"]), periodo.count >= 23 {
             let start = String(periodo.prefix(10))
             let end = String(periodo.suffix(10))
@@ -364,7 +507,17 @@ enum MetrogasJSONParser {
         }
         mapped["MONTO_TOTAL"] = dict["TOTALAPAGAR"] ?? dict["MONTO_TOTAL"]
         mapped["CONSUMO"] = dict["M3"] ?? dict["CONSUMO"]
+        if stringValue(mapped, keys: ["NUMERO_FACTURA", "NRO_FACTURA", "nro_factura", "codigo"]) == nil {
+            let emision = stringValue(dict, keys: ["FECHA_EMISION"]) ?? "na"
+            let total = stringValue(dict, keys: ["TOTALAPAGAR"]) ?? "0"
+            let periodo = stringValue(dict, keys: ["PERIODO_CONSUMO"]) ?? emision
+            mapped["NUMERO_FACTURA"] = "IPOST-\(periodo)-\(total)"
+        }
         return parseM360Invoice(mapped, source: .history)
+    }
+
+    static func parseM360DebtItems(_ items: [[String: Any]]) -> [Invoice] {
+        items.compactMap { parseM360DebtItem($0) }
     }
 
     private static func parseM360DebtItem(_ dict: [String: Any]) -> Invoice? {

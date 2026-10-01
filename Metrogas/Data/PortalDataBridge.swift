@@ -370,9 +370,7 @@ final class PortalDataBridge: NSObject {
     }
 
     private func mergeInvoices(_ a: [Invoice], _ b: [Invoice]) -> [Invoice] {
-        var map: [String: Invoice] = [:]
-        for inv in a + b { map[inv.id] = inv }
-        return Array(map.values).sorted { $0.dueDate > $1.dueDate }
+        MetrogasJSONParser.mergeInvoiceLists(a, b)
     }
 
     private func mergeReadings(_ a: [ConsumptionReading], _ b: [ConsumptionReading]) -> [ConsumptionReading] {
@@ -833,16 +831,35 @@ enum PortalPayloadParser {
             account.email = loginHint
         }
 
-        var invoices: [Invoice] = []
+        var history: [Invoice] = []
+        var debts: [Invoice] = []
+        var billingDebtListPresent = false
         var readings: [ConsumptionReading] = []
 
         for item in payloads {
             guard let data = item.body.data(using: .utf8) else { continue }
             let parsed = MetrogasJSONParser.parse(data)
-            invoices = mergeInvoices(invoices, parsed.invoices)
             readings = mergeReadings(readings, parsed.readings)
             account = MetrogasJSONParser.mergeAccount(account, parsed.account)
+
+            let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let hasDeudasBlock = root?["deudas"] != nil
+            if hasDeudasBlock {
+                // Autoridad de “qué está impago” = bloque deudas de publicbilling (web MetroGAS).
+                billingDebtListPresent = true
+                debts = MetrogasJSONParser.mergeInvoiceLists(debts, extractDebts(from: root))
+            }
+            if !parsed.invoices.isEmpty {
+                history = MetrogasJSONParser.mergeInvoiceLists(history, parsed.invoices)
+            }
         }
+
+        // Autoridad de estado: listado `deudas` de publicbilling (web MetroGAS).
+        var invoices = MetrogasJSONParser.reconcileInvoices(
+            history: history,
+            debts: debts,
+            billingDebtListPresent: billingDebtListPresent
+        )
 
         let fromDOM = MetrogasJSONParser.parseDOMText(domText)
         if invoices.isEmpty { invoices = fromDOM.invoices }
@@ -860,10 +877,12 @@ enum PortalPayloadParser {
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
     }
 
-    private static func mergeInvoices(_ a: [Invoice], _ b: [Invoice]) -> [Invoice] {
-        var map: [String: Invoice] = [:]
-        for inv in a + b { map[inv.id] = inv }
-        return Array(map.values).sorted { $0.dueDate > $1.dueDate }
+    /// Extrae solo ítems de `deudas` del JSON de publicbilling.
+    private static func extractDebts(from root: [String: Any]?) -> [Invoice] {
+        guard let root,
+              let deudas = root["deudas"] as? [String: Any],
+              let items = deudas["items"] as? [[String: Any]] else { return [] }
+        return MetrogasJSONParser.parseM360DebtItems(items)
     }
 
     private static func mergeReadings(_ a: [ConsumptionReading], _ b: [ConsumptionReading]) -> [ConsumptionReading] {
