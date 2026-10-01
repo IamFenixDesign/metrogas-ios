@@ -16,6 +16,8 @@
 		A10000000000000000000008 /* SharedComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* SharedComponents.swift */; };
 		A10000000000000000000027 /* TabBarScrollState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000027 /* TabBarScrollState.swift */; };
 		A10000000000000000000028 /* InAppBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000028 /* InAppBrowserView.swift */; };
+		A10000000000000000000029 /* AppNotification.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000029 /* AppNotification.swift */; };
+		A1000000000000000000002A /* NotificationCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000002A /* NotificationCenterView.swift */; };
 		A10000000000000000000009 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* RootTabView.swift */; };
 		A1000000000000000000000A /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* HomeView.swift */; };
 		A1000000000000000000000C /* InvoiceListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* InvoiceListView.swift */; };
@@ -55,6 +57,8 @@
 		B10000000000000000000008 /* SharedComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedComponents.swift; sourceTree = "<group>"; };
 		B10000000000000000000027 /* TabBarScrollState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBarScrollState.swift; sourceTree = "<group>"; };
 		B10000000000000000000028 /* InAppBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppBrowserView.swift; sourceTree = "<group>"; };
+		B10000000000000000000029 /* AppNotification.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNotification.swift; sourceTree = "<group>"; };
+		B1000000000000000000002A /* NotificationCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationCenterView.swift; sourceTree = "<group>"; };
 		B10000000000000000000009 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000A /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000C /* InvoiceListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoiceListView.swift; sourceTree = "<group>"; };
@@ -133,6 +137,7 @@
 				B10000000000000000000003 /* Invoice.swift */,
 				B10000000000000000000004 /* Consumption.swift */,
 				B10000000000000000000005 /* Account.swift */,
+				B10000000000000000000029 /* AppNotification.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -184,8 +189,17 @@
 				E1000000000000000000000A /* Invoices */,
 				E1000000000000000000000B /* Consumption */,
 				E1000000000000000000000C /* Account */,
+				E10000000000000000000016 /* Notifications */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		E10000000000000000000016 /* Notifications */ = {
+			isa = PBXGroup;
+			children = (
+				B1000000000000000000002A /* NotificationCenterView.swift */,
+			);
+			path = Notifications;
 			sourceTree = "<group>";
 		};
 		E10000000000000000000015 /* Login */ = {
@@ -336,6 +350,7 @@
 				A10000000000000000000003 /* Invoice.swift in Sources */,
 				A10000000000000000000004 /* Consumption.swift in Sources */,
 				A10000000000000000000005 /* Account.swift in Sources */,
+				A10000000000000000000029 /* AppNotification.swift in Sources */,
 				A10000000000000000000006 /* Formatters.swift in Sources */,
 				A10000000000000000000017 /* MetrogasURLs.swift in Sources */,
 				A10000000000000000000018 /* AppSession.swift in Sources */,
@@ -351,6 +366,7 @@
 				A10000000000000000000008 /* SharedComponents.swift in Sources */,
 				A10000000000000000000027 /* TabBarScrollState.swift in Sources */,
 				A10000000000000000000028 /* InAppBrowserView.swift in Sources */,
+				A1000000000000000000002A /* NotificationCenterView.swift in Sources */,
 				A10000000000000000000009 /* RootTabView.swift in Sources */,
 				A10000000000000000000013 /* LaunchSplashView.swift in Sources */,
 				A1000000000000000000001A /* LoginView.swift in Sources */,

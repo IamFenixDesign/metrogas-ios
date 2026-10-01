@@ -6,6 +6,7 @@ struct AccountView: View {
     @EnvironmentObject private var reminders: ReminderService
     @EnvironmentObject private var tabScroll: TabBarScrollState
     @State private var showLogoutConfirm = false
+    @State private var showNotificationCenter = false
     @State private var customerNumberError: String?
     @State private var appear = false
 
@@ -82,6 +83,27 @@ struct AccountView: View {
                 .listRowInsets(sectionRowInsets)
 
                 Section {
+                    Button {
+                        showNotificationCenter = true
+                    } label: {
+                        HStack {
+                            Label("Centro de notificaciones", systemImage: "bell.badge.fill")
+                            Spacer()
+                            if reminders.unreadCount > 0 {
+                                Text("\(reminders.unreadCount)")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Capsule().fill(MetrogasTheme.brandFlame))
+                            }
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+
                     Toggle("Recordatorios de vencimiento", isOn: $reminders.remindersEnabled)
                         .padding(.vertical, 4)
                         .onChange(of: reminders.remindersEnabled) { _, _ in
@@ -121,7 +143,7 @@ struct AccountView: View {
                     if reminders.authorizationStatus == .denied {
                         Text("Las notificaciones están desactivadas. Activalas en Ajustes → Metrogas → Notificaciones.")
                     } else {
-                        Text("Recordatorios de vencimiento y avisos cuando sincronizás una factura nueva. El botón de prueba dispara una notificación local en ~1s.")
+                        Text("Centro in-app para ver y borrar avisos. También recordatorios de vencimiento y factura nueva.")
                     }
                 }
                 .listRowBackground(glassListRow)
@@ -183,6 +205,10 @@ struct AccountView: View {
             }
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }
+            }
+            .fullScreenCover(isPresented: $showNotificationCenter) {
+                NotificationCenterView()
+                    .environmentObject(reminders)
             }
             .alert("¿Cerrar sesión?", isPresented: $showLogoutConfirm) {
                 Button("Cancelar", role: .cancel) {}

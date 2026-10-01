@@ -3,9 +3,11 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var store: AccountDataStore
     @EnvironmentObject private var session: AppSession
+    @EnvironmentObject private var reminders: ReminderService
     @EnvironmentObject private var tabScroll: TabBarScrollState
     @State private var appear = false
     @State private var payBrowser: InAppBrowserDestination?
+    @State private var showNotificationCenter = false
 
     private var resolvedCustomerNumber: String? {
         MetrogasURLs.normalizedCustomerNumber(session.customerNumber ?? "")
@@ -66,7 +68,15 @@ struct HomeView: View {
 
     private var brandHero: some View {
         VStack(alignment: .leading, spacing: 10) {
-            MetrogasLogo(height: 28, alignment: .leading)
+            HStack(alignment: .center) {
+                Image("MetrogasLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 28)
+                    .accessibilityLabel("MetroGAS")
+                Spacer(minLength: 12)
+                notificationButton
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 let first = store.account.holderName.components(separatedBy: " ").first
@@ -79,7 +89,47 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .accessibilityElement(children: .combine)
+        .fullScreenCover(isPresented: $showNotificationCenter) {
+            NotificationCenterView()
+                .environmentObject(reminders)
+        }
+    }
+
+    private var notificationButton: some View {
+        Button {
+            showNotificationCenter = true
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: reminders.unreadCount > 0 ? "bell.badge.fill" : "bell.fill")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(MetrogasTheme.brandBlue)
+                    .frame(width: 44, height: 44)
+                    .background {
+                        Circle()
+                            .fill(.ultraThinMaterial)
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(Color.white.opacity(0.45), lineWidth: 0.8)
+                            )
+                    }
+
+                if reminders.unreadCount > 0 {
+                    Text(reminders.unreadCount > 9 ? "9+" : "\(reminders.unreadCount)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(MetrogasTheme.brandFlame))
+                        .offset(x: 4, y: -2)
+                }
+            }
+        }
+        .buttonStyle(PressableGlassStyle())
+        .accessibilityLabel(
+            reminders.unreadCount > 0
+                ? "Notificaciones, \(reminders.unreadCount) sin leer"
+                : "Notificaciones"
+        )
     }
 
     private var syncBanner: some View {

@@ -2,7 +2,7 @@ import Foundation
 import UserNotifications
 import Combine
 
-/// Recordatorios locales nativos de iOS (`UNUserNotificationCenter`).
+/// Recordatorios locales nativos de iOS (`UNUserNotificationCenter`) + inbox in-app.
 @MainActor
 final class ReminderService: NSObject, ObservableObject {
     @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
@@ -23,13 +23,18 @@ final class ReminderService: NSObject, ObservableObject {
     }
     @Published private(set) var lastTestNotificationAt: Date?
     @Published var testNotificationMessage: String?
+    /// Centro de notificaciones dentro de la app (borrables).
+    @Published private(set) var inbox: [AppNotificationItem] = []
 
     private enum Keys {
         static let enabled = "metrogas.reminders.enabled"
         static let daysBefore = "metrogas.reminders.daysBefore"
         static let newInvoiceAlerts = "metrogas.reminders.newInvoiceAlerts"
         static let knownInvoiceIDs = "metrogas.reminders.knownInvoiceIDs"
+        static let inbox = "metrogas.notifications.inbox"
     }
+
+    private let maxInboxCount = 100
 
     override init() {
         remindersEnabled = UserDefaults.standard.object(forKey: Keys.enabled) as? Bool ?? true
@@ -37,7 +42,12 @@ final class ReminderService: NSObject, ObservableObject {
         let stored = UserDefaults.standard.object(forKey: Keys.daysBefore) as? Int ?? 3
         daysBeforeDue = min(max(stored, 1), 7)
         super.init()
+        inbox = Self.loadInbox()
         UNUserNotificationCenter.current().delegate = self
+    }
+
+    var unreadCount: Int {
+        inbox.filter { !$0.isRead }.count
     }
 
     func refreshAuthorizationStatus() async {
@@ -181,17 +191,109 @@ final class ReminderService: NSObject, ObservableObject {
         testNotificationMessage = "Notificación de prueba enviada. Debería aparecer en ~1s."
     }
 
+    // MARK: - Inbox in-app
+
+    func recordInboxNotification(
+        id: String,
+        title: String,
+        body: String,
+        kind: AppNotificationKind? = nil,
+        createdAt: Date = Date()
+    ) {
+        if inbox.contains(where: { $0.id == id }) { return }
+        let item = AppNotificationItem(
+            id: id,
+            title: title,
+            body: body,
+            createdAt: createdAt,
+            isRead: false,
+            kind: kind ?? AppNotificationKind.infer(fromIdentifier: id)
+        )
+        inbox.insert(item, at: 0)
+        if inbox.count > maxInboxCount {
+            inbox = Array(inbox.prefix(maxInboxCount))
+        }
+        persistInbox()
+        refreshAppBadge()
+    }
+
+    func deleteNotification(id: String) {
+        inbox.removeAll { $0.id == id }
+        persistInbox()
+        refreshAppBadge()
+        UNUserNotificationCenter.current()
+            .removeDeliveredNotifications(withIdentifiers: [id])
+    }
+
+    func deleteNotifications(at offsets: IndexSet) {
+        let ids = offsets.map { inbox[$0].id }
+        inbox.remove(atOffsets: offsets)
+        persistInbox()
+        refreshAppBadge()
+        UNUserNotificationCenter.current()
+            .removeDeliveredNotifications(withIdentifiers: ids)
+    }
+
+    func clearAllNotifications() {
+        inbox.removeAll()
+        persistInbox()
+        refreshAppBadge()
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+    }
+
+    func markAllNotificationsRead() {
+        guard inbox.contains(where: { !$0.isRead }) else {
+            refreshAppBadge()
+            return
+        }
+        for index in inbox.indices {
+            inbox[index].isRead = true
+        }
+        persistInbox()
+        refreshAppBadge()
+    }
+
+    func markNotificationRead(id: String) {
+        guard let index = inbox.firstIndex(where: { $0.id == id }) else { return }
+        guard !inbox[index].isRead else { return }
+        inbox[index].isRead = true
+        persistInbox()
+        refreshAppBadge()
+    }
+
+    private func persistInbox() {
+        guard let data = try? JSONEncoder().encode(inbox) else { return }
+        UserDefaults.standard.set(data, forKey: Keys.inbox)
+    }
+
+    private static func loadInbox() -> [AppNotificationItem] {
+        guard let data = UserDefaults.standard.data(forKey: Keys.inbox),
+              let items = try? JSONDecoder().decode([AppNotificationItem].self, from: data) else {
+            return []
+        }
+        return items.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private func refreshAppBadge() {
+        let count = unreadCount
+        Task {
+            try? await UNUserNotificationCenter.current().setBadgeCount(count)
+        }
+    }
+
     private func postImmediate(
         id: String,
         title: String,
         body: String,
         delaySeconds: TimeInterval = 0.2
     ) async {
+        recordInboxNotification(id: id, title: title, body: body)
+
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        content.badge = NSNumber(value: 1)
+        content.badge = NSNumber(value: unreadCount)
         content.categoryIdentifier = "NEW_INVOICE"
 
         let trigger = UNTimeIntervalNotificationTrigger(
@@ -226,11 +328,32 @@ final class ReminderService: NSObject, ObservableObject {
 }
 
 extension ReminderService: UNUserNotificationCenterDelegate {
-    /// Muestra banner/sonido nativos también con la app abierta.
+    /// Muestra banner/sonido nativos también con la app abierta y guarda en el inbox.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound, .badge]
+        let request = notification.request
+        let content = request.content
+        let id = request.identifier
+        let title = content.title
+        let body = content.body
+        await MainActor.run {
+            recordInboxNotification(id: id, title: title, body: body)
+        }
+        return [.banner, .list, .sound, .badge]
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let request = response.notification.request
+        let content = request.content
+        let id = request.identifier
+        await MainActor.run {
+            recordInboxNotification(id: id, title: content.title, body: content.body)
+            markNotificationRead(id: id)
+        }
     }
 }
