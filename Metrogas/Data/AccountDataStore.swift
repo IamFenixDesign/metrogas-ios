@@ -110,12 +110,6 @@ final class AccountDataStore: ObservableObject {
         invoices.first { $0.id == id }
     }
 
-    func markAsPaid(_ id: String) {
-        guard let index = invoices.firstIndex(where: { $0.id == id }) else { return }
-        invoices[index].status = .paid
-        persistCache()
-    }
-
     func updateNotes(_ id: String, notes: String) {
         guard let index = invoices.firstIndex(where: { $0.id == id }) else { return }
         invoices[index].notes = notes

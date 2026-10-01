@@ -5,7 +5,6 @@ struct InvoiceDetailView: View {
     let invoiceID: String
 
     @State private var draftNotes: String = ""
-    @State private var showPaidConfirmation = false
     @State private var appear = false
     @FocusState private var notesFocused: Bool
 
@@ -27,14 +26,6 @@ struct InvoiceDetailView: View {
             draftNotes = invoice?.notes ?? ""
             withAnimation(MetrogasTheme.springSoft) { appear = true }
         }
-        .alert("¿Marcar como pagada?", isPresented: $showPaidConfirmation) {
-            Button("Cancelar", role: .cancel) {}
-            Button("Confirmar") {
-                store.markAsPaid(invoiceID)
-            }
-        } message: {
-            Text("Se actualiza el estado solo en este dispositivo.")
-        }
     }
 
     @ViewBuilder
@@ -49,8 +40,6 @@ struct InvoiceDetailView: View {
                     .appearMotion(visible: appear, index: 2)
                 notesCard(invoice)
                     .appearMotion(visible: appear, index: 3)
-                actions(invoice)
-                    .appearMotion(visible: appear, index: 4)
 
                 FloatingTabBarSpacer()
             }
@@ -166,33 +155,6 @@ struct InvoiceDetailView: View {
         }
         .padding(18)
         .liquidGlass(cornerRadius: 22)
-    }
-
-    @ViewBuilder
-    private func actions(_ invoice: Invoice) -> some View {
-        if invoice.status != .paid {
-            Button {
-                showPaidConfirmation = true
-            } label: {
-                Label("Marcar como pagada", systemImage: "checkmark.circle.fill")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .foregroundStyle(.white)
-                    .background {
-                        Capsule(style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [MetrogasTheme.brandBlue, MetrogasTheme.brandCyan],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .shadow(color: MetrogasTheme.brandBlue.opacity(0.35), radius: 12, y: 6)
-                    }
-            }
-            .buttonStyle(PressableGlassStyle())
-        }
     }
 
     private func detailRow(_ title: String, _ value: String) -> some View {

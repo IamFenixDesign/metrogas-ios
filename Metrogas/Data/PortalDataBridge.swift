@@ -211,7 +211,8 @@ final class PortalDataBridge: NSObject {
     }
 
     /// Solo saldos (cuando ya hay N° de cliente).
-    func sync(accountId: String, loginHint: String?, timeoutSeconds: Double = 28) async throws -> MetrogasDataSnapshot {
+    /// Carga el index liviano de saldos (no la SPA `#/go/`) y consulta billing+listR2 en paralelo.
+    func sync(accountId: String, loginHint: String?, timeoutSeconds: Double = 8) async throws -> MetrogasDataSnapshot {
         guard let normalized = MetrogasURLs.normalizedCustomerNumber(accountId) else {
             throw MetrogasAuthError.unexpectedResponse
         }
@@ -219,8 +220,8 @@ final class PortalDataBridge: NSObject {
             mode: .saldos,
             accountId: normalized,
             loginHint: loginHint,
-            startURLs: [MetrogasURLs.saldosGo(accountId: normalized)],
-            timeoutSeconds: timeoutSeconds
+            startURLs: [MetrogasURLs.saldos],
+            timeoutSeconds: min(timeoutSeconds, 8)
         )
     }
 
@@ -257,6 +258,14 @@ final class PortalDataBridge: NSObject {
         let userContent = config.userContentController
         userContent.add(self, name: "metrogasSync")
         userContent.addUserScript(WKUserScript(source: Self.hookScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        // Precargar reCAPTCHA ni bien arranca el documento (antes de la SPA UI5).
+        if mode == .saldos {
+            userContent.addUserScript(WKUserScript(
+                source: Self.recaptchaPreloadScript,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            ))
+        }
 
         let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: config)
         webView.navigationDelegate = self
@@ -541,6 +550,18 @@ final class PortalDataBridge: NSObject {
     })();
     """
 
+    /// Precarga el script de reCAPTCHA en document-start para ahorrar ~300–800ms.
+    private static let recaptchaPreloadScript = """
+    (function() {
+      if (window.__mgRecaptchaPreloaded) return;
+      window.__mgRecaptchaPreloaded = true;
+      var s = document.createElement('script');
+      s.src = 'https://www.google.com/recaptcha/api.js?render=explicit';
+      s.async = true;
+      (document.head || document.documentElement).appendChild(s);
+    })();
+    """
+
     private static func syncScript(accountId: String) -> String {
         """
         (function() {
@@ -563,82 +584,73 @@ final class PortalDataBridge: NSObject {
               var t = setInterval(function() {
                 n++;
                 if (window.grecaptcha && window.grecaptcha.render) { clearInterval(t); cb(); }
-                else if (n > 40) { clearInterval(t); postNative('syncError', { message: 'recaptcha' }); }
-              }, 250);
+                else if (n > 20) { clearInterval(t); postNative('syncError', { message: 'recaptcha' }); }
+              }, 100);
             };
             s.onerror = function() { postNative('syncError', { message: 'recaptcha-load' }); };
-            document.head.appendChild(s);
+            (document.head || document.documentElement).appendChild(s);
           }
 
           function waitGrecaptchaReady(cb) {
             try { window.grecaptcha.ready(cb); }
-            catch (e) { setTimeout(function() { waitGrecaptchaReady(cb); }, 200); }
+            catch (e) { setTimeout(function() { waitGrecaptchaReady(cb); }, 50); }
           }
 
-          function getToken(cb) {
-            waitGrecaptchaReady(function() {
-              var host = document.getElementById('__mg_captcha_host');
-              if (!host) {
-                host = document.createElement('div');
-                host.id = '__mg_captcha_host';
-                host.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;opacity:0;';
-                document.body.appendChild(host);
-              }
-              var done = false;
-              function finish(token) {
-                if (done) return;
-                done = true;
-                cb(token ? (token + SUFFIX) : '');
-              }
-              try {
-                if (typeof window.__mgCaptchaId !== 'number') {
-                  window.__mgCaptchaId = window.grecaptcha.render(host, {
-                    sitekey: SITEKEY,
-                    size: 'invisible',
-                    callback: finish,
-                    'error-callback': function() { finish(''); },
-                    'expired-callback': function() { finish(''); }
-                  });
-                }
-                window.grecaptcha.reset(window.__mgCaptchaId);
-                window.grecaptcha.execute(window.__mgCaptchaId);
-                setTimeout(function() { finish(''); }, 7000);
-              } catch (e) { finish(''); }
-            });
+          function postJSONWithToken(path, bodyObj, token, cb) {
+            if (!token) { cb(0, ''); return; }
+            var payload = Object.assign({}, bodyObj);
+            payload.captcha2 = token;
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', path, true);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.setRequestHeader('Accept', 'application/json,*/*');
+            xhr.timeout = 3500;
+            xhr.onreadystatechange = function() {
+              if (xhr.readyState === 4) cb(xhr.status, xhr.responseText || '');
+            };
+            xhr.ontimeout = function() { cb(0, ''); };
+            xhr.send(JSON.stringify(payload));
           }
 
-          function postJSON(path, bodyObj, cb) {
-            getToken(function(token) {
-              if (!token) { cb(0, ''); return; }
-              var payload = Object.assign({}, bodyObj);
-              if (path.indexOf('/consumption/') !== -1) payload.captcha = token;
-              else payload.captcha2 = token;
-              var xhr = new XMLHttpRequest();
-              xhr.open('POST', path, true);
-              xhr.setRequestHeader('Content-Type', 'application/json');
-              xhr.setRequestHeader('Accept', 'application/json,*/*');
-              xhr.onreadystatechange = function() {
-                if (xhr.readyState === 4) cb(xhr.status, xhr.responseText || '');
-              };
-              xhr.send(JSON.stringify(payload));
-            });
+          function getJSONWithToken(path, token, cb) {
+            if (!token) { cb(0, ''); return; }
+            var url = path.replace(/\\/?$/, '/') + token;
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.setRequestHeader('Accept', 'application/json,*/*');
+            xhr.timeout = 2500;
+            xhr.onreadystatechange = function() {
+              if (xhr.readyState === 4) cb(xhr.status, xhr.responseText || '');
+            };
+            xhr.ontimeout = function() { cb(0, ''); };
+            xhr.send();
           }
 
-          function getJSON(path, cb) {
-            getToken(function(token) {
-              if (!token) { cb(0, ''); return; }
-              var url = path;
-              if (path.indexOf('/publicSubscription/') !== -1) {
-                url = path.replace(/\\/?$/, '/') + token;
-              }
-              var xhr = new XMLHttpRequest();
-              xhr.open('GET', url, true);
-              xhr.setRequestHeader('Accept', 'application/json,*/*');
-              xhr.onreadystatechange = function() {
-                if (xhr.readyState === 4) cb(xhr.status, xhr.responseText || '');
-              };
-              xhr.send();
-            });
+          function renderWidget(hostId, onToken) {
+            var host = document.getElementById(hostId);
+            if (!host) {
+              host = document.createElement('div');
+              host.id = hostId;
+              host.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;opacity:0;';
+              (document.body || document.documentElement).appendChild(host);
+            }
+            var done = false;
+            function finish(token) {
+              if (done) return;
+              done = true;
+              onToken(token ? (token + SUFFIX) : '');
+            }
+            try {
+              var wid = window.grecaptcha.render(host, {
+                sitekey: SITEKEY,
+                size: 'invisible',
+                callback: finish,
+                'error-callback': function() { finish(''); },
+                'expired-callback': function() { finish(''); }
+              });
+              window.grecaptcha.execute(wid);
+              setTimeout(function() { finish(''); }, 2200);
+            } catch (e) { finish(''); }
           }
 
           function run() {
@@ -649,42 +661,50 @@ final class PortalDataBridge: NSObject {
               finished = true;
               postNative('syncDone', { accountId: ACCOUNT });
             }
-            // 1) Billing (titular + saldos/deudas) y 2) listR2 (historial facturas)
-            // son obligatorios. Contacto/consumo van después y no pueden cortar el sync.
-            postJSON('/OvServiceHub/api/v1/M360/publicbilling/r2', {
-              accountId: ACCOUNT, relation: 'FD'
-            }, function(status, body) {
-              postNative('net', { url: '/OvServiceHub/api/v1/M360/publicbilling/r2', method: 'POST', status: status, body: body });
-              postJSON('/OvServiceHub/api/v1/M360/publicinvoice/listR2', {
-                accountId: ACCOUNT
-              }, function(status2, body2) {
-                postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/listR2', method: 'POST', status: status2, body: body2 });
-                postJSON('/OvServiceHub/api/v1/M360/publicAccount', {
+
+            waitGrecaptchaReady(function() {
+              var pending = 2;
+              function oneDone() {
+                pending -= 1;
+                if (pending <= 0) finishSync();
+              }
+
+              // Dos widgets en paralelo → billing + listR2 al mismo tiempo.
+              renderWidget('__mg_captcha_a', function(token1) {
+                postJSONWithToken('/OvServiceHub/api/v1/M360/publicbilling/r2', {
                   accountId: ACCOUNT, relation: 'FD'
-                }, function(statusA, bodyA) {
-                  postNative('net', { url: '/OvServiceHub/api/v1/M360/publicAccount', method: 'POST', status: statusA, body: bodyA });
-                  postJSON('/OvServiceHub/api/v1/publicAccount', {
-                    accountId: ACCOUNT, relation: 'FD'
-                  }, function(statusB, bodyB) {
-                    postNative('net', { url: '/OvServiceHub/api/v1/publicAccount', method: 'POST', status: statusB, body: bodyB });
-                    getJSON('/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, function(status4, body4) {
-                      postNative('net', { url: '/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, method: 'GET', status: status4, body: body4 });
-                      getJSON('/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, function(status5, body5) {
-                        postNative('net', { url: '/OvServiceHub/api/v1/M360/publicSubscription/' + ACCOUNT, method: 'GET', status: status5, body: body5 });
-                        postJSON('/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, {}, function(status3, body3) {
-                          postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, method: 'POST', status: status3, body: body3 });
-                          finishSync();
-                        });
+                }, token1, function(status, body) {
+                  postNative('net', { url: '/OvServiceHub/api/v1/M360/publicbilling/r2', method: 'POST', status: status, body: body });
+                  oneDone();
+                });
+              });
+
+              renderWidget('__mg_captcha_b', function(token2) {
+                postJSONWithToken('/OvServiceHub/api/v1/M360/publicinvoice/listR2', {
+                  accountId: ACCOUNT
+                }, token2, function(status2, body2) {
+                  postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/listR2', method: 'POST', status: status2, body: body2 });
+                  oneDone();
+
+                  // Email factura digital: best-effort, no bloquea.
+                  if (!finished) {
+                    renderWidget('__mg_captcha_c', function(token3) {
+                      if (!token3 || finished) return;
+                      getJSONWithToken('/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, token3, function(status4, body4) {
+                        if (!finished) {
+                          postNative('net', { url: '/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, method: 'GET', status: status4, body: body4 });
+                        }
                       });
                     });
-                  });
+                  }
                 });
               });
             });
-            setTimeout(finishSync, 28000);
+
+            setTimeout(finishSync, 4500);
           }
 
-          ensureRecaptcha(function() { setTimeout(run, 400); });
+          ensureRecaptcha(run);
         })();
         """
     }
@@ -732,7 +752,7 @@ extension PortalDataBridge: WKScriptMessageHandler {
                 }
             } else {
                 Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    try? await Task.sleep(nanoseconds: 20_000_000)
                     triggerSaldosAPISyncIfNeeded()
                 }
             }
@@ -777,32 +797,13 @@ extension PortalDataBridge: WKScriptMessageHandler {
     private func maybeFinishSaldosEarly(url: String) {
         guard mode == .saldos, continuation != nil else { return }
         let lower = url.lowercased()
-        // Evaluar al llegar facturas/contacto. Nunca cortar solo con perfil
-        // (publicAccount) porque eso mataba listR2 y dejaba Cuenta sin facturas.
-        guard lower.contains("listr2")
-            || lower.contains("publicaccount")
-            || lower.contains("publicsubscription")
-            || lower.contains("consumption") else { return }
+        guard lower.contains("listr2") || lower.contains("publicbilling") else { return }
 
         Task { @MainActor in
             let urls = captured.map { $0.url.lowercased() }
-            // Obligatorios: billing (saldos/deudas) + listR2 (historial).
+            // Cerrar en cuanto hay billing + historial (camino rápido ~1s).
             guard urls.contains(where: { $0.contains("publicbilling") }) else { return }
             guard urls.contains(where: { $0.contains("listr2") }) else { return }
-
-            let early = PortalPayloadParser.parse(payloads: captured, domText: domText, loginHint: loginHint)
-            let hasInvoicesOrDebts = !early.invoices.isEmpty
-            let hasCoreProfile = !early.account.holderName.isEmpty
-                || (!early.account.supplyAddress.isEmpty && early.account.supplyAddress != "—")
-                || (!early.account.meterNumber.isEmpty && early.account.meterNumber != "—")
-            guard hasInvoicesOrDebts || hasCoreProfile else { return }
-
-            // Esperar al menos un intento de contacto para no perder email/teléfono.
-            let triedContact = urls.contains(where: {
-                $0.contains("publicaccount") || $0.contains("publicsubscription")
-            })
-            guard triedContact else { return }
-
             await completeIfNeeded()
         }
     }
@@ -813,7 +814,7 @@ extension PortalDataBridge: WKNavigationDelegate {
         webView.evaluateJavaScript(Self.hookScript, completionHandler: nil)
         if mode == .saldos {
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 450_000_000)
+                try? await Task.sleep(nanoseconds: 30_000_000)
                 triggerSaldosAPISyncIfNeeded()
             }
         } else {

@@ -220,7 +220,7 @@ struct LoginView: View {
                     if session.isLoggingIn {
                         ProgressView().tint(.white)
                     }
-                    Text(session.isLoggingIn ? "Consultando MetroGAS…" : "Ingresar")
+                    Text(session.isLoggingIn ? "Sincronizando…" : "Ingresar")
                         .font(.headline)
                 }
                 .frame(maxWidth: .infinity)

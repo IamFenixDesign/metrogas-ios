@@ -60,13 +60,36 @@ enum MetrogasJSONParser {
         var readings: [ConsumptionReading] = []
 
         // publicinvoice/listR2 → historial completo (pagadas + pendientes).
-        if let isu = dict["ISU"] as? [[String: Any]] {
-            history.append(contentsOf: isu.compactMap { parseM360Invoice($0, source: .history) })
-        }
-        if let ipost = dict["IPOST"] as? [[String: Any]] {
-            for row in ipost {
-                if let inv = parseM360IPost(row) { history.append(inv) }
+        let isuRows: [[String: Any]] = {
+            if let rows = dict["ISU"] as? [[String: Any]] { return rows }
+            if let rows = dict["ISU"] as? [Any] {
+                return rows.compactMap { $0 as? [String: Any] }
             }
+            if let nested = dict["data"] as? [String: Any] {
+                if let rows = nested["ISU"] as? [[String: Any]] { return rows }
+                if let rows = nested["ISU"] as? [Any] {
+                    return rows.compactMap { $0 as? [String: Any] }
+                }
+            }
+            return []
+        }()
+        history.append(contentsOf: isuRows.compactMap { parseM360Invoice($0, source: .history) })
+
+        let ipostRows: [[String: Any]] = {
+            if let rows = dict["IPOST"] as? [[String: Any]] { return rows }
+            if let rows = dict["IPOST"] as? [Any] {
+                return rows.compactMap { $0 as? [String: Any] }
+            }
+            if let nested = dict["data"] as? [String: Any] {
+                if let rows = nested["IPOST"] as? [[String: Any]] { return rows }
+                if let rows = nested["IPOST"] as? [Any] {
+                    return rows.compactMap { $0 as? [String: Any] }
+                }
+            }
+            return []
+        }()
+        for row in ipostRows {
+            if let inv = parseM360IPost(row) { history.append(inv) }
         }
 
         // publicbilling/r2 → info + deudas (solo adeudadas).

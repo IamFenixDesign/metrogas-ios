@@ -22,7 +22,7 @@ actor MetrogasDataService {
         let snapshot = try await PortalDataBridge.shared.sync(
             accountId: id,
             loginHint: nil,
-            timeoutSeconds: 40
+            timeoutSeconds: 6
         )
 
         var account = AccountProfile.empty
