@@ -9,7 +9,7 @@ final class AccountDataStore: ObservableObject {
     @Published var account: AccountProfile = .empty
     @Published var searchText: String = ""
     @Published var invoiceFilter: InvoiceFilter = .all
-    @Published var consumptionPeriod: ConsumptionPeriod = .last12
+    @Published var consumptionPeriod: ConsumptionPeriod = .last6
     @Published var isLoading = false
     @Published var lastSync: Date?
     @Published var syncMessage: String?
@@ -79,9 +79,11 @@ final class AccountDataStore: ObservableObject {
     }
 
     var visibleReadings: [ConsumptionReading] {
-        readings
-            .filter { consumptionPeriod.includes($0) }
-            .sorted { $0.periodStart < $1.periodStart }
+        let sorted = MetrogasJSONParser.sortedConsumption(readings)
+        guard let count = consumptionPeriod.suffixCount(total: sorted.count) else {
+            return sorted
+        }
+        return Array(sorted.suffix(count))
     }
 
     var averageConsumption: Double {
@@ -280,7 +282,7 @@ final class AccountDataStore: ObservableObject {
         needsCustomerNumber = false
         searchText = ""
         invoiceFilter = .all
-        consumptionPeriod = .last12
+        consumptionPeriod = .last6
         lastSync = nil
         syncMessage = nil
         needsReauthentication = false

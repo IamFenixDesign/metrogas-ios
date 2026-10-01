@@ -221,7 +221,7 @@ final class PortalDataBridge: NSObject {
             accountId: normalized,
             loginHint: loginHint,
             startURLs: [MetrogasURLs.saldos],
-            timeoutSeconds: min(timeoutSeconds, 8)
+            timeoutSeconds: min(max(timeoutSeconds, 10), 12)
         )
     }
 
@@ -594,15 +594,16 @@ final class PortalDataBridge: NSObject {
             catch (e) { setTimeout(function() { waitGrecaptchaReady(cb); }, 50); }
           }
 
-          function postJSONWithToken(path, bodyObj, token, cb) {
+          function postJSONWithToken(path, bodyObj, token, cb, captchaKey) {
             if (!token) { cb(0, ''); return; }
             var payload = Object.assign({}, bodyObj);
-            payload.captcha2 = token;
+            // billing/listR2 usan captcha2; consumption (web) usa captcha (+ suffix MG2).
+            payload[captchaKey || 'captcha2'] = token;
             var xhr = new XMLHttpRequest();
             xhr.open('POST', path, true);
             xhr.setRequestHeader('Content-Type', 'application/json');
             xhr.setRequestHeader('Accept', 'application/json,*/*');
-            xhr.timeout = 3500;
+            xhr.timeout = 4000;
             xhr.onreadystatechange = function() {
               if (xhr.readyState === 4) cb(xhr.status, xhr.responseText || '');
             };
@@ -661,13 +662,13 @@ final class PortalDataBridge: NSObject {
             }
 
             waitGrecaptchaReady(function() {
-              var pending = 2;
+              // billing + listR2 + consumption (misma SPA web de saldos).
+              var pending = 3;
               function oneDone() {
                 pending -= 1;
                 if (pending <= 0) finishSync();
               }
 
-              // Dos widgets en paralelo → billing + listR2 al mismo tiempo.
               renderWidget('__mg_captcha_a', function(token1) {
                 postJSONWithToken('/OvServiceHub/api/v1/M360/publicbilling/r2', {
                   accountId: ACCOUNT, relation: 'FD'
@@ -683,23 +684,37 @@ final class PortalDataBridge: NSObject {
                 }, token2, function(status2, body2) {
                   postNative('net', { url: '/OvServiceHub/api/v1/M360/publicinvoice/listR2', method: 'POST', status: status2, body: body2 });
                   oneDone();
+                });
+              });
+
+              renderWidget('__mg_captcha_c', function(token3) {
+                // Igual que Main.controller.js: POST consumption/{id} con {captcha: token+MG2}.
+                postJSONWithToken('/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT, {
+                }, token3, function(status3, body3) {
+                  postNative('net', {
+                    url: '/OvServiceHub/api/v1/M360/publicinvoice/consumption/' + ACCOUNT,
+                    method: 'POST',
+                    status: status3,
+                    body: body3
+                  });
+                  oneDone();
 
                   // Email factura digital: best-effort, no bloquea.
                   if (!finished) {
-                    renderWidget('__mg_captcha_c', function(token3) {
-                      if (!token3 || finished) return;
-                      getJSONWithToken('/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, token3, function(status4, body4) {
+                    renderWidget('__mg_captcha_d', function(token4) {
+                      if (!token4 || finished) return;
+                      getJSONWithToken('/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, token4, function(status4, body4) {
                         if (!finished) {
                           postNative('net', { url: '/OvServiceHub/api/v1/publicSubscription/' + ACCOUNT, method: 'GET', status: status4, body: body4 });
                         }
                       });
                     });
                   }
-                });
+                }, 'captcha');
               });
             });
 
-            setTimeout(finishSync, 4500);
+            setTimeout(finishSync, 5500);
           }
 
           ensureRecaptcha(run);
@@ -795,13 +810,16 @@ extension PortalDataBridge: WKScriptMessageHandler {
     private func maybeFinishSaldosEarly(url: String) {
         guard mode == .saldos, continuation != nil else { return }
         let lower = url.lowercased()
-        guard lower.contains("listr2") || lower.contains("publicbilling") else { return }
+        guard lower.contains("listr2")
+                || lower.contains("publicbilling")
+                || lower.contains("consumption") else { return }
 
         Task { @MainActor in
             let urls = captured.map { $0.url.lowercased() }
-            // Cerrar en cuanto hay billing + historial (camino rápido ~1s).
+            // Facturas + deudas + consumo (como la web de saldos).
             guard urls.contains(where: { $0.contains("publicbilling") }) else { return }
             guard urls.contains(where: { $0.contains("listr2") }) else { return }
+            guard urls.contains(where: { $0.contains("consumption") }) else { return }
             await completeIfNeeded()
         }
     }
@@ -835,6 +853,7 @@ enum PortalPayloadParser {
         var debts: [Invoice] = []
         var billingDebtListPresent = false
         var readings: [ConsumptionReading] = []
+        var apiConsumption: [ConsumptionReading] = []
 
         for item in payloads {
             guard let data = item.body.data(using: .utf8) else { continue }
@@ -852,6 +871,15 @@ enum PortalPayloadParser {
             if !parsed.invoices.isEmpty {
                 history = MetrogasJSONParser.mergeInvoiceLists(history, parsed.invoices)
             }
+            // Preferir PTE_CONSUMOS de publicinvoice/consumption (misma fuente que la web).
+            if item.url.lowercased().contains("consumption"), !parsed.readings.isEmpty {
+                apiConsumption = MetrogasJSONParser.sortedConsumption(parsed.readings)
+            } else if apiConsumption.isEmpty {
+                let labeled = parsed.readings.filter { !$0.periLabel.isEmpty }
+                if !labeled.isEmpty {
+                    apiConsumption = MetrogasJSONParser.sortedConsumption(labeled)
+                }
+            }
         }
 
         // Autoridad de estado: listado `deudas` de publicbilling (web MetroGAS).
@@ -860,6 +888,10 @@ enum PortalPayloadParser {
             debts: debts,
             billingDebtListPresent: billingDebtListPresent
         )
+
+        if !apiConsumption.isEmpty {
+            readings = apiConsumption
+        }
 
         let fromDOM = MetrogasJSONParser.parseDOMText(domText)
         if invoices.isEmpty { invoices = fromDOM.invoices }
@@ -872,6 +904,8 @@ enum PortalPayloadParser {
 
         if readings.isEmpty && !invoices.isEmpty {
             readings = MetrogasJSONParser.deriveReadings(from: invoices)
+        } else {
+            readings = MetrogasJSONParser.sortedConsumption(readings)
         }
 
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)

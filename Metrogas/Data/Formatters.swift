@@ -50,8 +50,9 @@ enum Formatters {
         let f = NumberFormatter()
         f.locale = .argentina
         f.numberStyle = .decimal
-        f.maximumFractionDigits = 1
-        f.minimumFractionDigits = 1
+        // La web de saldos muestra m³ enteros (Math.floor).
+        f.maximumFractionDigits = 0
+        f.minimumFractionDigits = 0
         return f
     }()
 

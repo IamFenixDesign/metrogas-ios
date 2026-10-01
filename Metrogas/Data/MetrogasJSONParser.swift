@@ -111,9 +111,12 @@ enum MetrogasJSONParser {
             debts.append(contentsOf: parseM360DebtItems(items))
         }
 
-        // publicinvoice/consumption/{id} → { PTE_CONSUMOS: [...] }
+        // publicinvoice/consumption/{id} → { PTE_CONSUMOS: [...] } (misma SPA web).
         if let consumos = dict["PTE_CONSUMOS"] as? [[String: Any]] {
-            readings = consumos.compactMap { parseM360Consumption($0) }
+            readings = sortedConsumption(consumos.compactMap { parseM360Consumption($0) })
+        } else if let nested = dict["data"] as? [String: Any],
+                  let consumos = nested["PTE_CONSUMOS"] as? [[String: Any]] {
+            readings = sortedConsumption(consumos.compactMap { parseM360Consumption($0) })
         }
 
         // Reconciliar contra deudas de billing: nunca marcar pagada sin evidencia MetroGAS.
@@ -388,22 +391,41 @@ enum MetrogasJSONParser {
         let withM3 = invoices.filter { $0.consumptionM3 > 0 }.sorted { $0.periodStart < $1.periodStart }
         var previous: Double?
         return withM3.map { invoice in
+            let m3 = floor(invoice.consumptionM3)
             let delta: Double
             if let previous, previous != 0 {
-                delta = ((invoice.consumptionM3 - previous) / previous) * 100
+                delta = ((m3 - previous) / previous) * 100
             } else {
                 delta = 0
             }
-            previous = invoice.consumptionM3
+            previous = m3
             let days = Double(Calendar.current.dateComponents([.day], from: invoice.periodStart, to: invoice.periodEnd).day ?? 30) + 1
+            let year = Calendar.current.component(.year, from: invoice.periodStart)
+            let month = Calendar.current.component(.month, from: invoice.periodStart)
+            let periodNumber = min(max((month + 1) / 2, 1), 6)
+            let yy = String(format: "%02d", year % 100)
+            let peri = "(\(periodNumber)-\(yy)) \(year)"
             return ConsumptionReading(
-                id: UUID(),
+                id: "derived-\(invoice.id)",
                 periodStart: invoice.periodStart,
                 periodEnd: invoice.periodEnd,
-                cubicMeters: invoice.consumptionM3,
-                averageDaily: invoice.consumptionM3 / max(days, 1),
-                comparedToPreviousPercent: delta
+                cubicMeters: m3,
+                averageDaily: m3 / max(days, 1),
+                comparedToPreviousPercent: delta,
+                periodNumber: periodNumber,
+                year: year,
+                previousYearCubicMeters: 0,
+                periLabel: peri
             )
+        }
+    }
+
+    /// Orden web: ANO_PERIODO, luego NUMERO_PERIODO.
+    static func sortedConsumption(_ readings: [ConsumptionReading]) -> [ConsumptionReading] {
+        readings.sorted {
+            if $0.year != $1.year { return $0.year < $1.year }
+            if $0.periodNumber != $1.periodNumber { return $0.periodNumber < $1.periodNumber }
+            return $0.periodStart < $1.periodStart
         }
     }
 
@@ -929,26 +951,59 @@ enum MetrogasJSONParser {
     }
 
     private static func parseM360Consumption(_ dict: [String: Any]) -> ConsumptionReading? {
-        let m3 = doubleValue(dict, keys: ["CONSUMO_PERIODO", "CONSUMO", "M3"])
-        guard let m3 else { return nil }
+        // Misma fuente que la web de saldos: PTE_CONSUMOS[].
+        let rawM3 = doubleValue(dict, keys: ["CONSUMO_PERIODO", "CONSUMO", "M3"])
+        guard let rawM3 else { return nil }
+        let m3 = floor(rawM3)
 
-        let year = Int(stringValue(dict, keys: ["ANO_PERIODO"]) ?? "") ?? Calendar.current.component(.year, from: Date())
-        let periodNum = Int(stringValue(dict, keys: ["NUMERO_PERIODO"]) ?? "") ?? 1
-        // bimestres ≈ 2 meses; aproximamos mes = period*2-1
+        let year = intValue(dict, keys: ["ANO_PERIODO"])
+            ?? Calendar.current.component(.year, from: Date())
+        let periodNum = min(max(intValue(dict, keys: ["NUMERO_PERIODO"]) ?? 1, 1), 6)
+        // Bimestre MetroGAS: 1=Ene-Feb … 6=Nov-Dic (igual criterio que la SPA).
         let month = min(max(periodNum * 2 - 1, 1), 12)
         let start = Calendar.metrogasDate(year: year, month: month, day: 1)
         let end = Calendar.current.date(byAdding: DateComponents(month: 2, day: -1), to: start) ?? start
-        let prev = doubleValue(dict, keys: ["CONSUMO_PERIODO_ANO_ANTERIOR"]) ?? 0
+        let prevRaw = doubleValue(dict, keys: ["CONSUMO_PERIODO_ANO_ANTERIOR"]) ?? 0
+        let prev = floor(prevRaw)
         let delta = prev > 0 ? ((m3 - prev) / prev) * 100 : 0
         let days = Double(Calendar.current.dateComponents([.day], from: start, to: end).day ?? 60) + 1
+
+        let yearText = stringValue(dict, keys: ["ANO_PERIODO"]) ?? "\(year)"
+        let yy = yearText.count == 4 ? String(yearText.suffix(2)) : yearText
+        let priorYear = stringValue(dict, keys: ["ANO_ANTERIOR"])
+        // Etiqueta idéntica a Main.controller.js de saldos.micuenta.
+        var peri = "(\(periodNum)-\(yy)) \(yearText)"
+        if let priorYear, !priorYear.isEmpty {
+            peri += " / \(priorYear)"
+        }
+
         return ConsumptionReading(
-            id: UUID(),
+            id: "m360-\(year)-\(periodNum)",
             periodStart: start,
             periodEnd: end,
             cubicMeters: m3,
             averageDaily: m3 / max(days, 1),
-            comparedToPreviousPercent: delta
+            comparedToPreviousPercent: delta,
+            periodNumber: periodNum,
+            year: year,
+            previousYearCubicMeters: prev,
+            periLabel: peri
         )
+    }
+
+    private static func intValue(_ dict: [String: Any], keys: [String]) -> Int? {
+        for key in keys {
+            if let n = dict[key] as? Int { return n }
+            if let n = dict[key] as? NSNumber { return n.intValue }
+            if let s = dict[key] as? String {
+                let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let v = Int(trimmed) { return v }
+                if let d = Double(trimmed.replacingOccurrences(of: ",", with: ".")) {
+                    return Int(d)
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: - Generic helpers
@@ -999,9 +1054,21 @@ enum MetrogasJSONParser {
         guard let m3, let start else { return nil }
         let end = dateValue(dict, keys: ["periodEnd", "FechaHasta"]) ?? start
         let days = Double(Calendar.current.dateComponents([.day], from: start, to: end).day ?? 30) + 1
+        let year = Calendar.current.component(.year, from: start)
+        let month = Calendar.current.component(.month, from: start)
+        let periodNumber = min(max((month + 1) / 2, 1), 6)
+        let floored = floor(m3)
         return ConsumptionReading(
-            id: UUID(), periodStart: start, periodEnd: end, cubicMeters: m3,
-            averageDaily: m3 / max(days, 1), comparedToPreviousPercent: 0
+            id: "generic-\(Int(start.timeIntervalSince1970))",
+            periodStart: start,
+            periodEnd: end,
+            cubicMeters: floored,
+            averageDaily: floored / max(days, 1),
+            comparedToPreviousPercent: 0,
+            periodNumber: periodNumber,
+            year: year,
+            previousYearCubicMeters: 0,
+            periLabel: ""
         )
     }
 
