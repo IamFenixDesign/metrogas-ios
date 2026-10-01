@@ -16,45 +16,38 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    TabBarScrollProbe()
+            VStack(alignment: .leading, spacing: 18) {
+                brandHero
+                    .appearMotion(visible: appear, index: 0)
 
-                    brandHero
-                        .appearMotion(visible: appear, index: 0)
-
-                    if store.isLoading {
-                        syncBanner
-                            .appearMotion(visible: appear, index: 1)
-                    }
-
-                    if let message = store.syncMessage {
-                        Text(message)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .liquidGlass(cornerRadius: 16)
-                            .appearMotion(visible: appear, index: 1)
-                    }
-
-                    balancePanel
-                        .appearMotion(visible: appear, index: 2)
-
-                    quickMetrics
-                        .appearMotion(visible: appear, index: 3)
-
-                    recentActivity
-                        .appearMotion(visible: appear, index: 4)
-
-                    FloatingTabBarSpacer()
+                if store.isLoading {
+                    syncBanner
+                        .appearMotion(visible: appear, index: 1)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
+
+                if let message = store.syncMessage {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .liquidGlass(cornerRadius: 16)
+                        .appearMotion(visible: appear, index: 1)
+                }
+
+                balancePanel
+                    .appearMotion(visible: appear, index: 2)
+
+                recentActivity
+                    .appearMotion(visible: appear, index: 3)
+
+                Spacer(minLength: 0)
+
+                FloatingTabBarSpacer()
             }
-            .scrollIndicators(.hidden)
-            .tracksFloatingTabBar(tabScroll)
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background { LiquidGlassBackground() }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)
@@ -67,17 +60,7 @@ struct HomeView: View {
     }
 
     private var brandHero: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center) {
-                Image("MetrogasLogo")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(height: 28)
-                    .accessibilityLabel("MetroGAS")
-                Spacer(minLength: 12)
-                notificationButton
-            }
-
+        HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
                 let first = store.account.holderName.components(separatedBy: " ").first
                 Text(first?.isEmpty == false ? "Hola, \(first!)" : "Hola")
@@ -88,6 +71,10 @@ struct HomeView: View {
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.secondary)
             }
+
+            Spacer(minLength: 12)
+
+            notificationButton
         }
         .fullScreenCover(isPresented: $showNotificationCenter) {
             NotificationCenterView()
@@ -217,28 +204,6 @@ struct HomeView: View {
         }
     }
 
-    private var quickMetrics: some View {
-        HStack(spacing: 12) {
-            MetricTile(
-                title: "Último consumo",
-                value: Formatters.m3(store.latestReading?.cubicMeters ?? 0),
-                icon: "gauge.with.dots.needle.67percent",
-                accent: MetrogasTheme.brandBlue
-            )
-            MetricTile(
-                title: "Medidor",
-                value: meterLabel,
-                icon: "wrench.and.screwdriver.fill",
-                accent: MetrogasTheme.brandCyan
-            )
-        }
-    }
-
-    private var meterLabel: String {
-        let meter = store.account.meterNumber.trimmingCharacters(in: .whitespacesAndNewlines)
-        return meter.isEmpty || meter == "—" ? "—" : meter
-    }
-
     private var recentActivity: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "Actividad reciente", subtitle: "Últimas facturas")
@@ -252,7 +217,7 @@ struct HomeView: View {
                     .liquidGlass(cornerRadius: 18)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(store.invoices.prefix(4))) { invoice in
+                    ForEach(Array(store.invoices.prefix(3))) { invoice in
                         NavigationLink {
                             InvoiceDetailView(invoiceID: invoice.id)
                         } label: {
@@ -260,7 +225,7 @@ struct HomeView: View {
                         }
                         .buttonStyle(PressableGlassStyle())
 
-                        if invoice.id != store.invoices.prefix(4).last?.id {
+                        if invoice.id != store.invoices.prefix(3).last?.id {
                             Divider().padding(.leading, 52).opacity(0.35)
                         }
                     }
