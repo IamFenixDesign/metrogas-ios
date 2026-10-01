@@ -200,6 +200,7 @@ struct AccountView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Cuenta")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .task {
                 await reminders.refreshAuthorizationStatus()
             }

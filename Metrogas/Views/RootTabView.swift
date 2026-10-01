@@ -22,10 +22,6 @@ enum AppTab: Hashable, CaseIterable, Identifiable {
         case .account: return "person.crop.circle.fill"
         }
     }
-
-    var index: Int {
-        Self.allCases.firstIndex(of: self) ?? 0
-    }
 }
 
 struct RootTabView: View {
@@ -40,28 +36,31 @@ struct RootTabView: View {
         .spring(response: 0.34, dampingFraction: 0.84, blendDuration: 0.12)
     }
 
-    /// Crossfade del contenido entre tabs.
-    private var contentSpring: Animation {
-        .interactiveSpring(response: 0.30, dampingFraction: 0.90, blendDuration: 0.15)
-    }
-
     var body: some View {
         ZStack(alignment: .bottom) {
+            // Fondo fijo bajo todos los tabs → nunca se ve negro al cambiar.
+            LiquidGlassBackground()
+
             ZStack {
                 ForEach(AppTab.allCases) { tab in
                     tabRoot(tab)
                         .environment(\.metrogasTabActive, selected == tab)
+                        // Tabs inactivos sin nav bar → evita franja negra al cruzar stacks.
+                        .toolbar(selected == tab && tab != .home ? .automatic : .hidden, for: .navigationBar)
+                        .toolbarBackground(.hidden, for: .navigationBar)
+                        // Sin scale/offset: esos dejaban un hueco arriba (franja negra).
                         .opacity(selected == tab ? 1 : 0)
-                        .scaleEffect(selected == tab ? 1 : 0.992, anchor: .center)
-                        .offset(x: contentOffset(for: tab))
                         .allowsHitTesting(selected == tab)
                         .zIndex(selected == tab ? 1 : 0)
                         .accessibilityHidden(selected != tab)
+                        // El contenido cambia al instante; solo anima el pill.
+                        .transaction { transaction in
+                            transaction.animation = nil
+                        }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .environmentObject(tabScroll)
-            .animation(contentSpring, value: selected)
 
             glassTabBar
                 .padding(.horizontal, isCompact ? 40 : 20)
@@ -91,12 +90,6 @@ struct RootTabView: View {
         case .account:
             AccountView()
         }
-    }
-
-    private func contentOffset(for tab: AppTab) -> CGFloat {
-        guard selected != tab else { return 0 }
-        let delta = tab.index - selected.index
-        return CGFloat(delta) * 10
     }
 
     private var glassTabBar: some View {

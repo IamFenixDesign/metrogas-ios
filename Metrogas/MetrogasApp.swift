@@ -21,11 +21,13 @@ struct MetrogasApp: App {
         }
     }
 
-    /// Large title sin fondo al tope; al scrollear se achica con barra estándar (estilo WhatsApp/Instagram).
+    /// Nav bar siempre transparente: evita la franja negra/opaca al cambiar de tab
+    /// (el fondo liquid glass del root queda visible debajo).
     private static func configureNavigationBar() {
         let clear = UINavigationBarAppearance()
         clear.configureWithTransparentBackground()
         clear.backgroundColor = .clear
+        clear.backgroundEffect = nil
         clear.shadowColor = .clear
         clear.largeTitleTextAttributes = [
             .foregroundColor: UIColor.label
@@ -34,21 +36,12 @@ struct MetrogasApp: App {
             .foregroundColor: UIColor.label
         ]
 
-        let scrolled = UINavigationBarAppearance()
-        scrolled.configureWithDefaultBackground()
-        scrolled.shadowColor = .clear
-        scrolled.largeTitleTextAttributes = [
-            .foregroundColor: UIColor.label
-        ]
-        scrolled.titleTextAttributes = [
-            .foregroundColor: UIColor.label
-        ]
-
         let nav = UINavigationBar.appearance()
-        nav.standardAppearance = scrolled
-        nav.compactAppearance = scrolled
+        nav.standardAppearance = clear
+        nav.compactAppearance = clear
         nav.scrollEdgeAppearance = clear
         nav.compactScrollEdgeAppearance = clear
+        nav.isTranslucent = true
         nav.prefersLargeTitles = true
     }
 }

@@ -51,6 +51,7 @@ struct HomeView: View {
             .background { LiquidGlassBackground() }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .onAppear {
                 tabScroll.reset()
                 TabBarScrollState.shared = tabScroll

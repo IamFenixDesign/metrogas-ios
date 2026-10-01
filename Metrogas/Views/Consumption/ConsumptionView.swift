@@ -31,6 +31,7 @@ struct ConsumptionView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Consumo")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }
             }
