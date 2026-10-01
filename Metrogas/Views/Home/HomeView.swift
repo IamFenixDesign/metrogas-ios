@@ -31,9 +31,6 @@ struct HomeView: View {
                         .appearMotion(visible: appear, index: 1)
                 }
 
-                nextInvoiceCard
-                    .appearMotion(visible: appear, index: 2)
-
                 if let invoice = store.nextDueInvoice,
                    let customerNumber = MetrogasURLs.normalizedCustomerNumber(session.customerNumber ?? "")
                     ?? MetrogasURLs.normalizedCustomerNumber(store.account.customerNumber) {
@@ -44,17 +41,17 @@ struct HomeView: View {
                     )
                     .padding(16)
                     .liquidGlass(cornerRadius: 22)
-                    .appearMotion(visible: appear, index: 3)
+                    .appearMotion(visible: appear, index: 2)
                 }
 
                 UpcomingDueSection()
-                    .appearMotion(visible: appear, index: 4)
+                    .appearMotion(visible: appear, index: 3)
 
                 quickMetrics
-                    .appearMotion(visible: appear, index: 5)
+                    .appearMotion(visible: appear, index: 4)
 
                 recentActivity
-                    .appearMotion(visible: appear, index: 6)
+                    .appearMotion(visible: appear, index: 5)
 
                 Spacer(minLength: 0)
 
@@ -86,88 +83,6 @@ struct HomeView: View {
                 .foregroundStyle(.primary)
         }
         .accessibilityElement(children: .combine)
-    }
-
-    @ViewBuilder
-    private var nextInvoiceCard: some View {
-        if let invoice = store.nextDueInvoice {
-            NavigationLink {
-                InvoiceDetailView(invoiceID: invoice.id)
-            } label: {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text(invoice.status == .overdue ? "Factura vencida" : "Próximo vencimiento")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.92))
-                        Spacer()
-                        StatusBadge(status: invoice.status)
-                            .colorScheme(.light)
-                    }
-
-                    Text(Formatters.money(invoice.amountARS))
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
-
-                    HStack {
-                        Label(invoice.periodLabel, systemImage: "calendar")
-                        Spacer()
-                        Label(
-                            "Vence \(DateFormatter.metrogasDayMonthYear.string(from: invoice.dueDate))",
-                            systemImage: "bell.fill"
-                        )
-                    }
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.88))
-                }
-                .padding(18)
-                .background {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        MetrogasTheme.deepNavy,
-                                        MetrogasTheme.brandBlue,
-                                        MetrogasTheme.brandCyan.opacity(0.95)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.28),
-                                        Color.white.opacity(0.02),
-                                        Color.white.opacity(0.12)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .blendMode(.plusLighter)
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.55),
-                                        Color.white.opacity(0.12),
-                                        Color.white.opacity(0.3)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    }
-                    .shadow(color: MetrogasTheme.brandBlue.opacity(0.35), radius: 14, y: 8)
-                }
-            }
-            .buttonStyle(PressableGlassStyle())
-        }
     }
 
     private var quickMetrics: some View {
