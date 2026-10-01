@@ -132,3 +132,129 @@ struct PressableGlassStyle: ButtonStyle {
             .animation(MetrogasTheme.springSnappy, value: configuration.isPressed)
     }
 }
+
+/// Medios de pago oficiales MetroGAS (abre `#/pagar/{N°}` dentro de la app).
+struct PaymentOptionsCard: View {
+    let customerNumber: String
+    var amountLabel: String? = nil
+    var compact: Bool = false
+
+    @State private var payBrowser: InAppBrowserDestination?
+
+    private var payURL: URL {
+        MetrogasURLs.saldosPagar(accountId: customerNumber)
+    }
+
+    private var options: [(title: String, subtitle: String, icon: String)] {
+        [
+            ("Tarjeta", "Crédito o débito online", "creditcard.fill"),
+            ("Código de pago", "Rapipago / Pago Fácil / otros", "barcode.viewfinder"),
+            ("MODO", "Pago con billetera MODO", "wave.3.right"),
+            ("Mercado Pago", "Pago con Mercado Pago", "banknote.fill")
+        ]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(
+                title: "Pagar",
+                subtitle: amountLabel.map { "Total \($0) · medios oficiales MetroGAS" }
+                    ?? "Medios oficiales MetroGAS"
+            )
+
+            Button {
+                payBrowser = InAppBrowserDestination(url: payURL)
+            } label: {
+                HStack {
+                    Image(systemName: "dollarsign.circle.fill")
+                        .font(.title3)
+                    Text("Pagar ahora")
+                        .font(.headline)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.vertical, 14)
+                .padding(.horizontal, 16)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [MetrogasTheme.brandFlame, MetrogasTheme.brandFlame.opacity(0.85)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .shadow(color: MetrogasTheme.brandFlame.opacity(0.3), radius: 10, y: 5)
+                }
+            }
+            .buttonStyle(PressableGlassStyle())
+
+            if !compact {
+                VStack(spacing: 8) {
+                    ForEach(options, id: \.title) { option in
+                        Button {
+                            payBrowser = InAppBrowserDestination(url: payURL)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: option.icon)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(MetrogasTheme.brandBlue)
+                                    .frame(width: 28)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(option.title)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    Text(option.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 12)
+                            .background {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color.white.opacity(0.45))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .strokeBorder(Color.white.opacity(0.4), lineWidth: 0.8)
+                                    )
+                            }
+                        }
+                        .buttonStyle(PressableGlassStyle())
+                    }
+                }
+
+                Button("Más info sobre cómo pagar") {
+                    payBrowser = InAppBrowserDestination(
+                        url: MetrogasURLs.comoPagar,
+                        title: "Cómo pagar"
+                    )
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(MetrogasTheme.brandBlue)
+            }
+        }
+        .padding(compact ? 0 : 18)
+        .modifier(PaymentCardChrome(enabled: !compact))
+        .fullScreenCover(item: $payBrowser) { destination in
+            InAppBrowserSheet(url: destination.url, title: destination.title)
+        }
+    }
+}
+
+private struct PaymentCardChrome: ViewModifier {
+    let enabled: Bool
+    func body(content: Content) -> some View {
+        if enabled {
+            content.liquidGlass(cornerRadius: 22)
+        } else {
+            content
+        }
+    }
+}

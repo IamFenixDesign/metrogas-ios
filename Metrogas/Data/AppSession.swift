@@ -5,6 +5,7 @@ import Combine
 @MainActor
 final class AppSession: ObservableObject {
     enum LoginMethod: String {
+        case customerNumber
         case google
         case password
     }
@@ -13,6 +14,10 @@ final class AppSession: ObservableObject {
         didSet { UserDefaults.standard.set(isAuthenticated, forKey: Keys.authenticated) }
     }
     @Published var appearanceMode: AppearanceMode = .system
+    /// N° de cliente con el que se ingresó (11 dígitos).
+    @Published var customerNumber: String? {
+        didSet { UserDefaults.standard.set(customerNumber, forKey: Keys.customerNumber) }
+    }
     @Published var loginEmail: String? {
         didSet { UserDefaults.standard.set(loginEmail, forKey: Keys.loginEmail) }
     }
@@ -20,32 +25,25 @@ final class AppSession: ObservableObject {
         didSet { UserDefaults.standard.set(lastLoginMethod?.rawValue, forKey: Keys.loginMethod) }
     }
 
-    /// Sheet que abre únicamente accounts.google.com.
     @Published var showGoogleAuth = false
     @Published var googleAuthURL: URL?
-
     @Published var isLoggingIn = false
     @Published var loginError: String?
-    /// Google OAuth terminó y estamos confirmando la sesión del portal.
     @Published var isConfirmingGoogleSession = false
+
+    /// Snapshot cargado en el login por N° (evita un segundo fetch al entrar).
+    private(set) var pendingLoginSnapshot: MetrogasDataSnapshot?
 
     private var googleFlowActive = false
     private var googleCompletionStarted = false
     private var didBootstrapSession = false
 
-    private var loginHintMissing: Bool {
-        guard let loginEmail else { return true }
-        return loginEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    var rememberedCustomerNumber: String? {
+        MetrogasURLs.normalizedCustomerNumber(customerNumber ?? "")
     }
 
-    /// Cuenta Google recordada: se puede continuar sin pedir email/contraseña.
-    var canContinueWithGoogle: Bool {
-        lastLoginMethod == .google && !loginHintMissing
-    }
-
-    var rememberedGoogleEmail: String? {
-        guard canContinueWithGoogle else { return nil }
-        return loginEmail?.trimmingCharacters(in: .whitespacesAndNewlines)
+    var canContinueWithCustomerNumber: Bool {
+        lastLoginMethod == .customerNumber && rememberedCustomerNumber != nil
     }
 
     enum AppearanceMode: String, CaseIterable, Identifiable {
@@ -68,14 +66,21 @@ final class AppSession: ObservableObject {
         static let appearance = "metrogas.session.appearance"
         static let loginEmail = "metrogas.session.loginEmail"
         static let loginMethod = "metrogas.session.loginMethod"
+        static let customerNumber = "metrogas.session.customerNumber"
     }
 
     init() {
         isAuthenticated = UserDefaults.standard.bool(forKey: Keys.authenticated)
         loginEmail = UserDefaults.standard.string(forKey: Keys.loginEmail)
+        customerNumber = UserDefaults.standard.string(forKey: Keys.customerNumber)
+            .flatMap { MetrogasURLs.normalizedCustomerNumber($0) }
         if let raw = UserDefaults.standard.string(forKey: Keys.loginMethod),
            let method = LoginMethod(rawValue: raw) {
             lastLoginMethod = method
+        }
+        // Migración: sesión vieja sin método → si hay N° guardado, tratarla como customerNumber.
+        if isAuthenticated, lastLoginMethod == nil, rememberedCustomerNumber != nil {
+            lastLoginMethod = .customerNumber
         }
         if let raw = UserDefaults.standard.string(forKey: Keys.appearance),
            let mode = AppearanceMode(rawValue: raw) {
@@ -83,10 +88,10 @@ final class AppSession: ObservableObject {
         }
     }
 
-    func login(email: String, password: String) async {
-        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !password.isEmpty else {
-            loginError = "Ingresá tu email y contraseña."
+    /// Login principal: N° de cliente MetroGAS (11 dígitos) → datos reales de saldos/M360.
+    func loginWithCustomerNumber(_ raw: String) async {
+        guard let id = MetrogasURLs.normalizedCustomerNumber(raw) else {
+            loginError = "Ingresá el N° de cliente de 11 dígitos (como figura en tu factura)."
             return
         }
 
@@ -95,188 +100,70 @@ final class AppSession: ObservableObject {
         defer { isLoggingIn = false }
 
         do {
-            try await MetrogasAuthService.shared.login(email: trimmed, password: password)
-            CredentialStore.save(email: trimmed, password: password)
-            loginEmail = trimmed
-            lastLoginMethod = .password
-            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
-            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
-            didBootstrapSession = true
-            isAuthenticated = true
-        } catch let error as MetrogasAuthError {
-            loginError = error.errorDescription
-        } catch {
-            loginError = "No pudimos iniciar sesión. Revisá tu conexión e intentá de nuevo."
-        }
-    }
-
-    /// Continúa con la cuenta Google recordada: sin pedir email ni contraseña.
-    func continueWithSavedGoogleAccount() async {
-        guard canContinueWithGoogle else {
-            await startGoogleLogin()
-            return
-        }
-
-        isLoggingIn = true
-        loginError = nil
-        defer { isLoggingIn = false }
-
-        await WebCookieBridge.syncWebKitCookiesToHTTP()
-
-        // Si la sesión del portal sigue viva, entrar directo.
-        if await MetrogasAuthService.shared.probePortalSession() {
-            let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
-            if let email = identity.email, !email.isEmpty {
-                loginEmail = email
-            }
-            // No vincular N° acá: solo LinkedAccountStore confirmado o M360/discovery.
-            lastLoginMethod = .google
-            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
-            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
-            didBootstrapSession = true
-            isAuthenticated = true
-            return
-        }
-
-        // Abrir Google OAuth: con cookies de Google suele bastar elegir la cuenta.
-        do {
-            let url = try await MetrogasAuthService.shared.prepareGoogleOAuthURL()
-            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
-            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
-            googleAuthURL = url
-            googleFlowActive = true
-            googleCompletionStarted = false
-            isConfirmingGoogleSession = false
-            showGoogleAuth = true
-        } catch let error as MetrogasAuthError {
-            loginError = error.errorDescription
-        } catch {
-            loginError = "No pudimos continuar con tu cuenta de Google."
-        }
-    }
-
-    /// Olvida la cuenta Google recordada y vuelve al formulario completo.
-    func useAnotherAccount() {
-        lastLoginMethod = nil
-        loginEmail = nil
-        loginError = nil
-        CredentialStore.clear()
-    }
-
-    func startGoogleLogin() async {
-        isLoggingIn = true
-        loginError = nil
-        defer { isLoggingIn = false }
-
-        do {
-            let url = try await MetrogasAuthService.shared.prepareGoogleOAuthURL()
-            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
-            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
-            googleAuthURL = url
-            googleFlowActive = true
-            googleCompletionStarted = false
-            isConfirmingGoogleSession = false
-            showGoogleAuth = true
-        } catch let error as MetrogasAuthError {
-            loginError = error.errorDescription
-        } catch {
-            loginError = "No pudimos abrir el inicio de sesión con Google."
-        }
-    }
-
-    func handleGoogleAuthNavigation(_ url: URL) {
-        guard googleFlowActive, let host = url.host?.lowercased() else { return }
-
-        // Capturar email desde la URL de Google apenas aparece (login_hint / Email).
-        // No cerrar el sheet acá: el usuario puede elegir otra cuenta.
-        if host.contains("accounts.google.com") || host.contains("google.com") {
-            if let email = MetrogasAuthService.emailFromOAuthURL(url) {
-                loginEmail = email
-            }
-            return
-        }
-
-        // Solo portal/acceso autenticados. Ignorar saldos (app pública) y redirects a medias.
-        guard MetrogasURLs.isAuthenticatedSessionHost(host) else { return }
-        guard !googleCompletionStarted else { return }
-        googleCompletionStarted = true
-        isConfirmingGoogleSession = true
-        isLoggingIn = true
-
-        Task {
-            defer {
-                isConfirmingGoogleSession = false
-                isLoggingIn = false
-            }
-
-            // Esperar a que las cookies SAML/SAP terminen de aterrizar.
-            var sessionReady = false
-            for _ in 0..<24 {
-                guard googleFlowActive else { return }
-                await WebCookieBridge.syncWebKitCookiesToHTTP()
-                if await MetrogasAuthService.shared.probePortalSession() {
-                    sessionReady = true
-                    break
-                }
-                try? await Task.sleep(nanoseconds: 500_000_000)
-            }
-
-            guard googleFlowActive else { return }
-
-            guard sessionReady else {
-                googleCompletionStarted = false
-                googleFlowActive = false
-                showGoogleAuth = false
-                googleAuthURL = nil
-                loginError = "No pudimos confirmar la sesión de MetroGAS con Google. Intentá de nuevo."
+            let snapshot = try await MetrogasDataService.shared.fetchByCustomerNumber(id)
+            let profile = snapshot.account
+            let hasSignal = !profile.holderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || (!profile.supplyAddress.isEmpty && profile.supplyAddress != "—")
+                || (!profile.meterNumber.isEmpty && profile.meterNumber != "—")
+                || !snapshot.invoices.isEmpty
+            guard hasSignal else {
+                loginError = "No encontramos datos para ese N° de cliente. Revisalo e intentá de nuevo."
                 return
             }
 
-            // Email real de la sesión (después del probe). No confiar solo en login_hint.
-            var resolvedEmail = loginEmail
-            for _ in 0..<8 {
-                let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
-                if let email = identity.email, !email.isEmpty {
-                    resolvedEmail = email
-                    break
-                }
-                try? await Task.sleep(nanoseconds: 250_000_000)
-            }
-            if let resolvedEmail {
-                loginEmail = resolvedEmail
-            }
-
-            lastLoginMethod = .google
-            googleFlowActive = false
-            showGoogleAuth = false
-            googleAuthURL = nil
-            googleCompletionStarted = false
-            let cookies = await MetrogasAuthService.shared.exportCookiesForWebKit()
-            await WebCookieBridge.syncHTTPCookiesToWebKit(cookies)
+            customerNumber = id
+            loginEmail = snapshot.account.email.isEmpty ? nil : snapshot.account.email
+            lastLoginMethod = .customerNumber
+            pendingLoginSnapshot = snapshot
+            LinkedAccountStore.bindCustomerOnly(id)
+            CredentialStore.clear()
             didBootstrapSession = true
             isAuthenticated = true
+        } catch {
+            loginError = "No pudimos consultar MetroGAS. Revisá el N° y tu conexión."
         }
     }
 
-    func cancelGoogleLogin() {
-        googleFlowActive = false
-        googleCompletionStarted = false
-        isConfirmingGoogleSession = false
-        showGoogleAuth = false
-        googleAuthURL = nil
-        loginError = nil
+    func continueWithSavedCustomerNumber() async {
+        guard let id = rememberedCustomerNumber else {
+            loginError = "Ingresá tu N° de cliente."
+            return
+        }
+        await loginWithCustomerNumber(id)
     }
 
-    /// Al abrir la app con sesión ya marcada: restaura cookies, revalida y deja lista la sync.
-    /// Devuelve `true` si la sesión quedó usable para sincronizar datos.
-    /// No bloquea la UI: corre en background tras el splash corto.
+    func useAnotherAccount() {
+        lastLoginMethod = nil
+        customerNumber = nil
+        loginEmail = nil
+        loginError = nil
+        pendingLoginSnapshot = nil
+        CredentialStore.clear()
+        LinkedAccountStore.clearAllBindings()
+    }
+
+    func consumePendingLoginSnapshot() -> MetrogasDataSnapshot? {
+        let snap = pendingLoginSnapshot
+        pendingLoginSnapshot = nil
+        return snap
+    }
+
     @discardableResult
     func restoreSessionIfNeeded() async -> Bool {
         guard isAuthenticated else { return false }
 
-        // 1) Cookies de un login Google previo pueden estar en WK.
-        await WebCookieBridge.syncWebKitCookiesToHTTP()
+        if lastLoginMethod == .customerNumber || rememberedCustomerNumber != nil {
+            // Login por N°: no hace falta sesión SAP/Google.
+            if rememberedCustomerNumber == nil {
+                await forceLocalLogout(keepCustomerNumber: false)
+                return false
+            }
+            lastLoginMethod = .customerNumber
+            didBootstrapSession = true
+            return true
+        }
 
+        await WebCookieBridge.syncWebKitCookiesToHTTP()
         let saved = CredentialStore.load()
         let email = saved?.email ?? loginEmail
         let password = saved?.password
@@ -293,85 +180,103 @@ final class AppSession: ObservableObject {
                 didBootstrapSession = true
                 return true
             }
-            await forceLocalLogout(keepEmail: true)
+            await forceLocalLogout(keepCustomerNumber: true)
             return false
-        } catch MetrogasAuthError.sessionExpired {
-            await forceLocalLogout(keepEmail: true)
-            loginError = MetrogasAuthError.sessionExpired.errorDescription
-            return false
-        } catch MetrogasAuthError.invalidCredentials {
+        } catch MetrogasAuthError.sessionExpired, MetrogasAuthError.invalidCredentials {
             CredentialStore.clear()
-            await forceLocalLogout(keepEmail: true)
-            loginError = "Tu sesión venció. Volvé a ingresar."
+            await forceLocalLogout(keepCustomerNumber: true)
+            loginError = "Tu sesión venció. Volvé a ingresar con tu N° de cliente."
             return false
         } catch {
-            // Red caída: mantenemos la sesión local y dejamos que sync muestre el error.
             didBootstrapSession = true
             return true
         }
     }
 
     func logout() async {
-        let keepGoogleAccount = lastLoginMethod == .google && !loginHintMissing
-        let preservedEmail = keepGoogleAccount ? loginEmail : nil
-        let preservedMethod: LoginMethod? = keepGoogleAccount ? .google : nil
-
         isAuthenticated = false
         showGoogleAuth = false
         googleAuthURL = nil
         googleFlowActive = false
         didBootstrapSession = false
         loginError = nil
+        pendingLoginSnapshot = nil
+        // Recordar N° para “Continuar” rápido.
+        let preservedNumber = rememberedCustomerNumber
+        let keepNumber = lastLoginMethod == .customerNumber && preservedNumber != nil
         CredentialStore.clear()
-
-        if keepGoogleAccount {
-            // Mantener identidad Google + cookies de Google; cortar solo MetroGAS/SAP.
-            loginEmail = preservedEmail
-            lastLoginMethod = preservedMethod
-            await MetrogasAuthService.shared.clearMetrogasSessionCookiesKeepingGoogle()
-            await WebCookieBridge.clearNonGoogleWebKitData()
-        } else {
+        await MetrogasAuthService.shared.clearCookies()
+        await WebCookieBridge.clearWebKitData()
+        if keepNumber {
+            customerNumber = preservedNumber
+            lastLoginMethod = .customerNumber
             loginEmail = nil
+        } else {
+            customerNumber = nil
             lastLoginMethod = nil
-            await MetrogasAuthService.shared.clearCookies()
-            await WebCookieBridge.clearWebKitData()
+            loginEmail = nil
         }
     }
 
-    /// Sesión SAP vencida: limpia cookies pero deja el email para reingresar rápido.
     func expireSession(clearSavedPassword: Bool) async {
         if clearSavedPassword { CredentialStore.clear() }
-        let keepGoogle = lastLoginMethod == .google
-        let preserved = loginEmail
-        isAuthenticated = false
-        showGoogleAuth = false
-        googleAuthURL = nil
-        googleFlowActive = false
-        didBootstrapSession = false
-        loginEmail = preserved
-        if keepGoogle {
-            await MetrogasAuthService.shared.clearMetrogasSessionCookiesKeepingGoogle()
-            await WebCookieBridge.clearNonGoogleWebKitData()
+        // Con login por N° no hay sesión SAP que expire: reingresar con el mismo N°.
+        if lastLoginMethod == .customerNumber {
+            loginError = "Volvé a ingresar con tu N° de cliente."
         } else {
-            await MetrogasAuthService.shared.clearCookies()
-            await WebCookieBridge.clearWebKitData()
+            loginError = MetrogasAuthError.sessionExpired.errorDescription
         }
-        loginError = MetrogasAuthError.sessionExpired.errorDescription
+        await forceLocalLogout(keepCustomerNumber: true)
+        await MetrogasAuthService.shared.clearCookies()
+        await WebCookieBridge.clearWebKitData()
     }
 
-    private func forceLocalLogout(keepEmail: Bool) async {
-        let preserved = keepEmail ? loginEmail : nil
-        let preservedMethod = keepEmail ? lastLoginMethod : nil
+    private func forceLocalLogout(keepCustomerNumber: Bool) async {
+        let preservedNumber = keepCustomerNumber ? rememberedCustomerNumber : nil
+        let preservedMethod: LoginMethod? = keepCustomerNumber && preservedNumber != nil ? .customerNumber : nil
         isAuthenticated = false
-        loginEmail = preserved
+        customerNumber = preservedNumber
         lastLoginMethod = preservedMethod
+        loginEmail = keepCustomerNumber ? loginEmail : nil
         showGoogleAuth = false
         googleAuthURL = nil
         googleFlowActive = false
         didBootstrapSession = false
+        pendingLoginSnapshot = nil
     }
 
     func persistAppearance() {
         UserDefaults.standard.set(appearanceMode.rawValue, forKey: Keys.appearance)
+    }
+
+    // MARK: - Compat stubs (UI vieja / sheets)
+
+    var canContinueWithGoogle: Bool { false }
+    var rememberedGoogleEmail: String? { nil }
+
+    func login(email: String, password: String) async {
+        _ = email
+        _ = password
+        loginError = "Ingresá con tu N° de cliente MetroGAS."
+    }
+
+    func startGoogleLogin() async {
+        loginError = "Ingresá con tu N° de cliente MetroGAS."
+    }
+
+    func continueWithSavedGoogleAccount() async {
+        await continueWithSavedCustomerNumber()
+    }
+
+    func handleGoogleAuthNavigation(_ url: URL) {
+        _ = url
+    }
+
+    func cancelGoogleLogin() {
+        showGoogleAuth = false
+        googleAuthURL = nil
+        googleFlowActive = false
+        isConfirmingGoogleSession = false
+        isLoggingIn = false
     }
 }

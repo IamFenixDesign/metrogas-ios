@@ -6,15 +6,55 @@ struct MetrogasDataSnapshot: Sendable {
     var readings: [ConsumptionReading]
 }
 
-/// Sincroniza con Oficina Virtual (Google o MetroGAS) vía portal + M360 saldos.
+/// Sincroniza datos de MetroGAS.
+/// Login por N° de cliente → M360 saldos (misma fuente que “Tu Factura” web).
 actor MetrogasDataService {
     static let shared = MetrogasDataService()
 
     private init() {}
 
-    func fetchAccountData(loginHint: String?, preferredAccountId: String?) async throws -> MetrogasDataSnapshot {
-        LinkedAccountStore.migrateIfNeeded()
+    /// Carga titular/facturas/consumo solo con el N° de cliente (11 dígitos).
+    func fetchByCustomerNumber(_ customerNumber: String) async throws -> MetrogasDataSnapshot {
+        guard let id = MetrogasURLs.normalizedCustomerNumber(customerNumber) else {
+            throw MetrogasAuthError.unexpectedResponse
+        }
 
+        let snapshot = try await PortalDataBridge.shared.sync(
+            accountId: id,
+            loginHint: nil,
+            timeoutSeconds: 10
+        )
+
+        var account = AccountProfile.empty
+        account = MetrogasJSONParser.mergeAccount(account, snapshot.account)
+        account.customerNumber = id
+        // Completar localidad/CP desde la dirección si billing no los mandó sueltos.
+        if (account.locality == "—" || account.locality.isEmpty),
+           account.supplyAddress != "—", !account.supplyAddress.isEmpty {
+            let enriched = MetrogasJSONParser.enrichAccountFromAnyJSON(
+                ["PVE_DIRECCION": account.supplyAddress],
+                into: account
+            )
+            account = MetrogasJSONParser.mergeAccount(account, enriched)
+            account.customerNumber = id
+        }
+
+        var invoices = snapshot.invoices
+        var readings = snapshot.readings
+        if readings.isEmpty && !invoices.isEmpty {
+            readings = MetrogasJSONParser.deriveReadings(from: invoices)
+        }
+
+        return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+    }
+
+    /// Flujo legacy portal+Google (se mantiene por si se reutiliza).
+    func fetchAccountData(loginHint: String?, preferredAccountId: String?) async throws -> MetrogasDataSnapshot {
+        if let preferred = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "") {
+            return try await fetchByCustomerNumber(preferred)
+        }
+
+        LinkedAccountStore.migrateIfNeeded()
         let identity = await MetrogasAuthService.shared.resolveSignedInIdentity()
         let email: String? = {
             if let loginHint, !loginHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -23,17 +63,12 @@ actor MetrogasDataService {
             return identity.email
         }()
 
-        // Esperar sesión de portal usable (crítico tras Google OAuth).
-        for _ in 0..<8 {
+        for _ in 0..<12 {
             if await MetrogasAuthService.shared.probePortalSession() { break }
             try? await Task.sleep(nanoseconds: 400_000_000)
         }
 
-        // Hint: solo vínculo confirmado. Nunca scrapes.
-        let preferredHint = MetrogasURLs.normalizedCustomerNumber(preferredAccountId ?? "")
-            ?? LinkedAccountStore.customerNumber(forEmail: email)
-
-        // Discovery siempre; preferred solo si el portal lo lista como candidato.
+        let preferredHint = LinkedAccountStore.customerNumber(forEmail: email)
         let snapshot = try await PortalDataBridge.shared.syncFromSession(
             loginHint: email,
             preferredAccountId: preferredHint,
@@ -41,26 +76,15 @@ actor MetrogasDataService {
             timeoutSeconds: 40
         )
 
-        var account = seedAccount(loginHint: email, customerNumber: nil)
+        var account = AccountProfile.empty
+        if let email, !email.isEmpty { account.email = email }
         account = MetrogasJSONParser.mergeAccount(account, snapshot.account)
 
-        let finalId = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber)
-        let finalProfile = !snapshot.account.holderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let finalAddress = !snapshot.account.supplyAddress.isEmpty && snapshot.account.supplyAddress != "—"
-        let finalInvoices = !snapshot.invoices.isEmpty
-        let ownershipOK = emailOwnershipAllowsBind(loginHint: email, accountEmail: snapshot.account.email)
-        let finalConfirmed = finalId != nil
-            && (finalProfile || finalAddress || finalInvoices)
-            && ownershipOK
-
-        if let email, !email.isEmpty {
-            account.email = email
-        }
-
-        guard let finalId, finalConfirmed else {
+        guard let finalId = MetrogasURLs.normalizedCustomerNumber(snapshot.account.customerNumber),
+              !snapshot.account.holderName.isEmpty || !snapshot.invoices.isEmpty
+                || (!snapshot.account.supplyAddress.isEmpty && snapshot.account.supplyAddress != "—")
+        else {
             account.customerNumber = "—"
-            if let email { LinkedAccountStore.unbind(email: email) }
-            // Sin confirmación de sesión/email: no mostrar datos ajenos.
             return MetrogasDataSnapshot(account: account, invoices: [], readings: [])
         }
 
@@ -72,29 +96,6 @@ actor MetrogasDataService {
         if readings.isEmpty && !invoices.isEmpty {
             readings = MetrogasJSONParser.deriveReadings(from: invoices)
         }
-
         return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
-    }
-
-    /// Si hay email de login y email de cuenta/subscription, deben coincidir.
-    private func emailOwnershipAllowsBind(loginHint: String?, accountEmail: String) -> Bool {
-        let login = loginHint?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-        let account = accountEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard login.contains("@"), account.contains("@") else {
-            // Sin email de cuenta no podemos negar; discovery de sesión ya filtró candidatos.
-            return true
-        }
-        return login == account
-    }
-
-    private func seedAccount(loginHint: String?, customerNumber: String?) -> AccountProfile {
-        var account = AccountProfile.empty
-        if let customerNumber, let normalized = MetrogasURLs.normalizedCustomerNumber(customerNumber) {
-            account.customerNumber = normalized
-        }
-        if let loginHint, !loginHint.isEmpty {
-            account.email = loginHint
-        }
-        return account
     }
 }

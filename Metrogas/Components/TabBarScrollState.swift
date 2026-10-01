@@ -50,24 +50,50 @@ final class TabBarScrollState: ObservableObject {
     }
 }
 
+private struct MetrogasTabActiveKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// `false` cuando el tab está montado pero no visible (crossfade del root).
+    var metrogasTabActive: Bool {
+        get { self[MetrogasTabActiveKey.self] }
+        set { self[MetrogasTabActiveKey.self] = newValue }
+    }
+}
+
 /// Vista UIKit colocada DENTRO del contenido scrolleable; observa el UIScrollView padre.
 struct TabBarScrollProbe: View {
+    @Environment(\.metrogasTabActive) private var tabActive
+
     var body: some View {
-        ScrollOffsetMonitorView()
-            .frame(width: 1, height: 1)
-            .opacity(0.01)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+        Group {
+            if tabActive {
+                ScrollOffsetMonitorView(isActive: true)
+            } else {
+                ScrollOffsetMonitorView(isActive: false)
+            }
+        }
+        .frame(width: 1, height: 1)
+        .opacity(0.01)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
 private struct ScrollOffsetMonitorView: UIViewRepresentable {
+    var isActive: Bool
+
     func makeUIView(context: Context) -> ScrollOffsetMonitorUIView {
         ScrollOffsetMonitorUIView()
     }
 
     func updateUIView(_ uiView: ScrollOffsetMonitorUIView, context: Context) {
-        uiView.ensureAttached()
+        if isActive {
+            uiView.ensureAttached()
+        } else {
+            uiView.detach()
+        }
     }
 }
 
@@ -99,6 +125,15 @@ private final class ScrollOffsetMonitorUIView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         ensureAttached()
+    }
+
+    func detach() {
+        observation?.invalidate()
+        observation = nil
+        observedScrollView = nil
+        retryWorkItem?.cancel()
+        retryWorkItem = nil
+        retries = 0
     }
 
     func ensureAttached() {

@@ -16,8 +16,9 @@ enum MetrogasJSONParser {
             invoices = m360.invoices
             readings = m360.readings
             account = mergeAccount(account, m360.account)
-            // publicSubscription → email (y a veces teléfono).
-            if dict["subscriptionId"] != nil || dict["digInvEmail"] != nil || dict["TIPO"] != nil {
+            // publicSubscription / publicAccount → email, teléfono y a veces titular.
+            if dict["subscriptionId"] != nil || dict["digInvEmail"] != nil || dict["TIPO"] != nil
+                || dict["telNumber"] != nil || dict["email"] != nil || dict["EMAIL"] != nil {
                 account = mergeAccount(account, parseSubscription(dict))
             }
             account = enrichAccountFromAnyJSON(dict, into: account)
@@ -59,46 +60,221 @@ enum MetrogasJSONParser {
         var readings: [ConsumptionReading] = []
 
         // publicinvoice/listR2 → historial completo (pagadas + pendientes).
-        if let isu = dict["ISU"] as? [[String: Any]] {
-            history.append(contentsOf: isu.compactMap { parseM360Invoice($0, source: .history) })
-        }
-        if let ipost = dict["IPOST"] as? [[String: Any]] {
-            for row in ipost {
-                if let inv = parseM360IPost(row) { history.append(inv) }
+        let isuRows: [[String: Any]] = {
+            if let rows = dict["ISU"] as? [[String: Any]] { return rows }
+            if let rows = dict["ISU"] as? [Any] {
+                return rows.compactMap { $0 as? [String: Any] }
             }
+            if let nested = dict["data"] as? [String: Any] {
+                if let rows = nested["ISU"] as? [[String: Any]] { return rows }
+                if let rows = nested["ISU"] as? [Any] {
+                    return rows.compactMap { $0 as? [String: Any] }
+                }
+            }
+            return []
+        }()
+        history.append(contentsOf: isuRows.compactMap { parseM360Invoice($0, source: .history) })
+
+        let ipostRows: [[String: Any]] = {
+            if let rows = dict["IPOST"] as? [[String: Any]] { return rows }
+            if let rows = dict["IPOST"] as? [Any] {
+                return rows.compactMap { $0 as? [String: Any] }
+            }
+            if let nested = dict["data"] as? [String: Any] {
+                if let rows = nested["IPOST"] as? [[String: Any]] { return rows }
+                if let rows = nested["IPOST"] as? [Any] {
+                    return rows.compactMap { $0 as? [String: Any] }
+                }
+            }
+            return []
+        }()
+        for row in ipostRows {
+            if let inv = parseM360IPost(row) { history.append(inv) }
         }
 
         // publicbilling/r2 → info + deudas (solo adeudadas).
+        // publicAccount → a veces el perfil viene en la raíz o en "info"/"account".
         if let info = dict["info"] as? [String: Any] {
             account = mergeAccount(account, parseM360Info(info))
         }
+        if let nested = dict["account"] as? [String: Any] {
+            account = mergeAccount(account, parseM360Info(nested))
+            account = mergeAccount(account, parseAccount(from: nested))
+        }
+        if dict["PVE_TITULAR"] != nil || dict["PVE_DIRECCION"] != nil || dict["meters"] != nil {
+            account = mergeAccount(account, parseM360Info(dict))
+        }
+        // Solo confiamos en “pagada” cuando MetroGAS mandó el bloque deudas (aunque esté vacío).
+        let billingDebtListPresent = dict["deudas"] != nil
         if let deudas = dict["deudas"] as? [String: Any],
            let items = deudas["items"] as? [[String: Any]] {
-            for item in items {
-                if let inv = parseM360DebtItem(item) { debts.append(inv) }
-            }
+            debts.append(contentsOf: parseM360DebtItems(items))
         }
 
-        // publicinvoice/consumption/{id} → { PTE_CONSUMOS: [...] }
+        // publicinvoice/consumption/{id} → { PTE_CONSUMOS: [...] } (misma SPA web).
         if let consumos = dict["PTE_CONSUMOS"] as? [[String: Any]] {
-            readings = consumos.compactMap { parseM360Consumption($0) }
+            readings = sortedConsumption(consumos.compactMap { parseM360Consumption($0) })
+        } else if let nested = dict["data"] as? [String: Any],
+                  let consumos = nested["PTE_CONSUMOS"] as? [[String: Any]] {
+            readings = sortedConsumption(consumos.compactMap { parseM360Consumption($0) })
         }
 
-        // Base = historial (incluye pagadas); las deudas solo actualizan pendientes.
-        var map: [String: Invoice] = [:]
-        for inv in history { map[inv.id] = inv }
+        // Reconciliar contra deudas de billing: nunca marcar pagada sin evidencia MetroGAS.
+        let invoices = reconcileInvoices(
+            history: history,
+            debts: debts,
+            billingDebtListPresent: billingDebtListPresent
+        )
+        return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+    }
+
+    /// Une historial (listR2) con deudas (publicbilling). Una factura solo queda
+    /// **Pagada** si MetroGAS la confirma (fecha/estado de pago) o si el listado de
+    /// deudas está presente y esa factura **no** aparece ahí.
+    static func reconcileInvoices(
+        history: [Invoice],
+        debts: [Invoice],
+        billingDebtListPresent: Bool
+    ) -> [Invoice] {
+        var debtByKey: [String: Invoice] = [:]
         for debt in debts {
-            if var existing = map[debt.id] {
-                existing.status = debt.status
-                existing.amountARS = debt.amountARS
-                map[debt.id] = existing
-            } else {
-                map[debt.id] = debt
+            for key in invoiceMatchKeys(debt) {
+                debtByKey[key] = debt
             }
         }
 
-        let invoices = Array(map.values).sorted { $0.dueDate > $1.dueDate }
-        return MetrogasDataSnapshot(account: account, invoices: invoices, readings: readings)
+        var map: [String: Invoice] = [:]
+        var claimedDebtIDs = Set<String>()
+
+        for item in history {
+            var invoice = item
+            if let debt = firstDebt(matching: invoice, in: debtByKey) {
+                invoice.status = debt.status
+                invoice.amountARS = debt.amountARS > 0 ? debt.amountARS : invoice.amountARS
+                claimedDebtIDs.insert(debt.id)
+            } else if billingDebtListPresent {
+                // Billing dice que no está en deudas → pagada en la web de saldos.
+                invoice.status = .paid
+            }
+            // Sin listado de deudas: respetar estado del parse (solo pagada con evidencia).
+            map[invoice.id] = preferInvoice(map[invoice.id], invoice)
+        }
+
+        for debt in debts where !claimedDebtIDs.contains(debt.id) {
+            let already = map.values.contains { existing in
+                !Set(invoiceMatchKeys(existing)).isDisjoint(with: invoiceMatchKeys(debt))
+            }
+            if !already {
+                map[debt.id] = preferInvoice(map[debt.id], debt)
+            }
+        }
+
+        return Array(map.values).sorted { $0.dueDate > $1.dueDate }
+    }
+
+    /// Merge entre payloads separados (listR2 + billing): prioriza deuda/impago.
+    static func mergeInvoiceLists(_ a: [Invoice], _ b: [Invoice]) -> [Invoice] {
+        let unpaid = (a + b).filter { $0.status == .pending || $0.status == .overdue }
+        if !unpaid.isEmpty {
+            // Hay deudas de billing (o pendientes explícitos): ellas mandan el estado.
+            return reconcileInvoices(
+                history: a + b,
+                debts: unpaid,
+                billingDebtListPresent: true
+            )
+        }
+        var map: [String: Invoice] = [:]
+        for inv in a + b {
+            map[inv.id] = preferInvoice(map[inv.id], inv)
+        }
+        return Array(map.values).sorted { $0.dueDate > $1.dueDate }
+    }
+
+    private static func firstDebt(matching invoice: Invoice, in debtByKey: [String: Invoice]) -> Invoice? {
+        for key in invoiceMatchKeys(invoice) {
+            if let debt = debtByKey[key] { return debt }
+        }
+        return nil
+    }
+
+    private static func invoiceMatchKeys(_ invoice: Invoice) -> [String] {
+        var keys: [String] = []
+        let id = invoice.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let number = invoice.number.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !id.isEmpty { keys.append(id.lowercased()) }
+        if !number.isEmpty { keys.append(number.lowercased()) }
+
+        let idDigits = id.filter(\.isNumber)
+        let numberDigits = number.filter(\.isNumber)
+        if idDigits.count >= 6 { keys.append("d:\(idDigits)") }
+        if numberDigits.count >= 6 { keys.append("d:\(numberDigits)") }
+        // Sufijos: codigo de deuda a veces trae prefijos distintos al N° de factura.
+        if idDigits.count >= 8 { keys.append("s:\(String(idDigits.suffix(8)))") }
+        if numberDigits.count >= 8 { keys.append("s:\(String(numberDigits.suffix(8)))") }
+
+        let day = Calendar.current.startOfDay(for: invoice.dueDate).timeIntervalSince1970
+        let amountKey = NSDecimalNumber(decimal: invoice.amountARS).stringValue
+        keys.append("due:\(Int(day))|\(amountKey)")
+
+        return Array(Set(keys))
+    }
+
+    private static func preferInvoice(_ existing: Invoice?, _ incoming: Invoice) -> Invoice {
+        guard let existing else { return incoming }
+        var result = existing
+
+        // Impago gana sobre pagada (billing/deudas manda).
+        if existing.status == .paid, incoming.status != .paid {
+            result = incoming
+            // Conservar periodo/consumo más ricos del historial si el de debt viene vacío.
+            if result.consumptionM3 == 0, existing.consumptionM3 > 0 {
+                result = Invoice(
+                    id: result.id,
+                    number: result.number.isEmpty ? existing.number : result.number,
+                    periodStart: existing.periodStart,
+                    periodEnd: existing.periodEnd,
+                    dueDate: result.dueDate,
+                    issuedDate: existing.issuedDate,
+                    amountARS: result.amountARS,
+                    status: result.status,
+                    consumptionM3: existing.consumptionM3,
+                    supplyPoint: existing.supplyPoint,
+                    notes: result.notes,
+                    breakdown: existing.breakdown
+                )
+            }
+            return result
+        }
+        if incoming.status == .paid, existing.status != .paid {
+            return existing
+        }
+        if incoming.status == .overdue, existing.status == .pending {
+            result.status = .overdue
+        }
+        if incoming.amountARS > 0, (existing.amountARS == 0 || incoming.status != .paid) {
+            result.amountARS = incoming.amountARS
+        }
+        if incoming.consumptionM3 > existing.consumptionM3 {
+            return Invoice(
+                id: result.id,
+                number: result.number,
+                periodStart: incoming.periodStart,
+                periodEnd: incoming.periodEnd,
+                dueDate: result.dueDate,
+                issuedDate: incoming.issuedDate,
+                amountARS: result.amountARS,
+                status: result.status,
+                consumptionM3: incoming.consumptionM3,
+                supplyPoint: result.supplyPoint,
+                notes: result.notes,
+                breakdown: incoming.breakdown
+            )
+        }
+        return result
+    }
+
+    private static func unpaidStatus(for dueDate: Date) -> InvoiceStatus {
+        dueDate < Calendar.current.startOfDay(for: Date()) ? .overdue : .pending
     }
 
     static func parseDOMText(_ text: String) -> MetrogasDataSnapshot {
@@ -215,22 +391,41 @@ enum MetrogasJSONParser {
         let withM3 = invoices.filter { $0.consumptionM3 > 0 }.sorted { $0.periodStart < $1.periodStart }
         var previous: Double?
         return withM3.map { invoice in
+            let m3 = floor(invoice.consumptionM3)
             let delta: Double
             if let previous, previous != 0 {
-                delta = ((invoice.consumptionM3 - previous) / previous) * 100
+                delta = ((m3 - previous) / previous) * 100
             } else {
                 delta = 0
             }
-            previous = invoice.consumptionM3
+            previous = m3
             let days = Double(Calendar.current.dateComponents([.day], from: invoice.periodStart, to: invoice.periodEnd).day ?? 30) + 1
+            let year = Calendar.current.component(.year, from: invoice.periodStart)
+            let month = Calendar.current.component(.month, from: invoice.periodStart)
+            let periodNumber = min(max((month + 1) / 2, 1), 6)
+            let yy = String(format: "%02d", year % 100)
+            let peri = "(\(periodNumber)-\(yy)) \(year)"
             return ConsumptionReading(
-                id: UUID(),
+                id: "derived-\(invoice.id)",
                 periodStart: invoice.periodStart,
                 periodEnd: invoice.periodEnd,
-                cubicMeters: invoice.consumptionM3,
-                averageDaily: invoice.consumptionM3 / max(days, 1),
-                comparedToPreviousPercent: delta
+                cubicMeters: m3,
+                averageDaily: m3 / max(days, 1),
+                comparedToPreviousPercent: delta,
+                periodNumber: periodNumber,
+                year: year,
+                previousYearCubicMeters: 0,
+                periLabel: peri
             )
+        }
+    }
+
+    /// Orden web: ANO_PERIODO, luego NUMERO_PERIODO.
+    static func sortedConsumption(_ readings: [ConsumptionReading]) -> [ConsumptionReading] {
+        readings.sorted {
+            if $0.year != $1.year { return $0.year < $1.year }
+            if $0.periodNumber != $1.periodNumber { return $0.periodNumber < $1.periodNumber }
+            return $0.periodStart < $1.periodStart
         }
     }
 
@@ -274,22 +469,26 @@ enum MetrogasJSONParser {
 
         let status: InvoiceStatus
         if source == .debt {
-            status = dueDate < Calendar.current.startOfDay(for: Date()) ? .overdue : .pending
+            status = unpaidStatus(for: dueDate)
         } else if paidAt != nil {
-            status = .paid
-        } else if let pending, pending <= 0 {
+            // MetroGAS mandó fecha de pago.
             status = .paid
         } else if statusRaw.contains("pag") || statusRaw.contains("saldad") || statusRaw.contains("cancel") {
+            // Estado textual de la web/API.
+            status = .paid
+        } else if let pending, pending <= 0, total != nil {
+            // Importe pendiente en cero con total conocido → saldada.
             status = .paid
         } else if let pending, pending > 0 {
-            status = dueDate < Calendar.current.startOfDay(for: Date()) ? .overdue : .pending
+            status = unpaidStatus(for: dueDate)
         } else if statusRaw.contains("venc") || statusRaw.contains("deud") {
             status = .overdue
         } else if statusRaw.contains("pend") {
             status = .pending
         } else {
-            // Historial sin deuda explícita → pagada (como en la web de saldos).
-            status = .paid
+            // Sin evidencia de pago ni listado de deudas en este payload:
+            // NO asumir pagada (billing lo confirmará al reconciliar).
+            status = unpaidStatus(for: dueDate)
         }
 
         let displayAmount: Decimal
@@ -317,10 +516,8 @@ enum MetrogasJSONParser {
 
     private static func parseM360IPost(_ dict: [String: Any]) -> Invoice? {
         // IPOST: CUENTA, FECHA_EMISION, PERIODO_CONSUMO "dd/MM/yyyy - dd/MM/yyyy", M3, TOTALAPAGAR
+        // CUENTA es el N° de cliente, NO el de factura — no usarla como id.
         var mapped = dict
-        if let cuenta = stringValue(dict, keys: ["CUENTA"]), cuenta.count >= 11 {
-            mapped["NUMERO_FACTURA"] = String(cuenta.suffix(11))
-        }
         if let periodo = stringValue(dict, keys: ["PERIODO_CONSUMO"]), periodo.count >= 23 {
             let start = String(periodo.prefix(10))
             let end = String(periodo.suffix(10))
@@ -332,7 +529,17 @@ enum MetrogasJSONParser {
         }
         mapped["MONTO_TOTAL"] = dict["TOTALAPAGAR"] ?? dict["MONTO_TOTAL"]
         mapped["CONSUMO"] = dict["M3"] ?? dict["CONSUMO"]
+        if stringValue(mapped, keys: ["NUMERO_FACTURA", "NRO_FACTURA", "nro_factura", "codigo"]) == nil {
+            let emision = stringValue(dict, keys: ["FECHA_EMISION"]) ?? "na"
+            let total = stringValue(dict, keys: ["TOTALAPAGAR"]) ?? "0"
+            let periodo = stringValue(dict, keys: ["PERIODO_CONSUMO"]) ?? emision
+            mapped["NUMERO_FACTURA"] = "IPOST-\(periodo)-\(total)"
+        }
         return parseM360Invoice(mapped, source: .history)
+    }
+
+    static func parseM360DebtItems(_ items: [[String: Any]]) -> [Invoice] {
+        items.compactMap { parseM360DebtItem($0) }
     }
 
     private static func parseM360DebtItem(_ dict: [String: Any]) -> Invoice? {
@@ -357,32 +564,48 @@ enum MetrogasJSONParser {
         var meterExtras: [String: Any] = [:]
         if let meters = info["meters"] as? [[String: Any]], let first = meters.first {
             meterExtras = first
-            if let n = stringValue(first, keys: ["NRO_MEDIDOR", "nro_medidor", "MEDIDOR"]) {
+            if let n = stringValue(first, keys: [
+                "NRO_MEDIDOR", "nro_medidor", "MEDIDOR", "meter", "meterNumber", "GERAET"
+            ]) {
                 meter = n
             }
+        } else if let n = stringValue(info, keys: ["NRO_MEDIDOR", "nro_medidor", "MEDIDOR", "meter", "meterNumber"]) {
+            meter = n
         }
 
-        // La SPA solo usa PVE_TITULAR / PVE_DIRECCION, pero billing puede traer más campos.
+        // La SPA usa PVE_TITULAR / PVE_DIRECCION / meters[].NRO_MEDIDOR;
+        // publicAccount / billing pueden traer más campos de contacto y categoría.
         let customer = firstNonEmpty(
-            stringValue(info, keys: ["PVE_NRO_CLIENTE", "NRO_CLIENTE", "accountId", "custNumber", "CUENTA", "VKONT"]),
-            fuzzyString(in: info, matching: ["cliente", "account", "vkont", "cuenta"])
+            stringValue(info, keys: [
+                "PVE_NRO_CLIENTE", "NRO_CLIENTE", "accountId", "custNumber", "CUENTA", "VKONT", "ctaContrato"
+            ]),
+            fuzzyString(in: info, matching: ["nro_cliente", "nrocliente", "vkont", "ctacontrato"])
         ) ?? "—"
 
         let address = firstNonEmpty(
-            stringValue(info, keys: ["PVE_DIRECCION", "direccion", "DOMICILIO", "CALLE", "address", "accountAddress"]),
-            fuzzyString(in: info, matching: ["direccion", "domicilio", "address", "calle"])
+            stringValue(info, keys: [
+                "PVE_DIRECCION", "direccion", "DOMICILIO", "CALLE", "address", "accountAddress",
+                "PVE_DOMICILIO", "STREET", "street"
+            ]),
+            fuzzyString(in: info, matching: ["direccion", "domicilio", "address", "calle"]),
+            fuzzyString(in: meterExtras, matching: ["direccion", "domicilio", "address", "calle"])
         ) ?? "—"
 
         var locality = firstNonEmpty(
-            stringValue(info, keys: ["PVE_LOCALIDAD", "LOCALIDAD", "localidad", "CITY", "PARTIDO", "partido", "BARRIO"]),
+            stringValue(info, keys: [
+                "PVE_LOCALIDAD", "LOCALIDAD", "localidad", "CITY", "PARTIDO", "partido", "BARRIO",
+                "PVE_PARTIDO", "ORT01", "city", "locality"
+            ]),
             fuzzyString(in: info, matching: ["localidad", "partido", "barrio", "city", "locality"]),
-            fuzzyString(in: meterExtras, matching: ["localidad", "partido"])
+            fuzzyString(in: meterExtras, matching: ["localidad", "partido", "barrio", "city"])
         ) ?? "—"
 
         var postal = firstNonEmpty(
-            stringValue(info, keys: ["PVE_CP", "PVE_CODIGO_POSTAL", "CODIGO_POSTAL", "CP", "cp", "postalCode", "ZIP"]),
-            fuzzyString(in: info, matching: ["postal", "codigopostal", "zip", "cpa"]),
-            fuzzyString(in: meterExtras, matching: ["postal", "cp"])
+            stringValue(info, keys: [
+                "PVE_CP", "PVE_CODIGO_POSTAL", "CODIGO_POSTAL", "CP", "cp", "postalCode", "ZIP", "PSTLZ"
+            ]),
+            fuzzyString(in: info, matching: ["postal", "codigopostal", "zip", "cpa", "pstlz"]),
+            fuzzyString(in: meterExtras, matching: ["postal", "cp", "pstlz"])
         ) ?? "—"
 
         // Muchas respuestas solo traen la dirección completa: sacar CP / localidad de ahí.
@@ -391,35 +614,52 @@ enum MetrogasJSONParser {
         if postal == "—" { postal = parsedAddress.postalCode ?? "—" }
 
         let email = firstNonEmpty(
-            stringValue(info, keys: ["PVE_EMAIL", "EMAIL", "email", "mail", "digInvEmail"]),
-            fuzzyString(in: info, matching: ["email", "mail"])
+            stringValue(info, keys: [
+                "PVE_EMAIL", "EMAIL", "email", "mail", "digInvEmail", "SMTP_ADDR", "emailOpt", "EMAIL_ID"
+            ]),
+            fuzzyString(in: info, matching: ["email", "smtp", "diginv"]),
+            fuzzyString(in: meterExtras, matching: ["email", "mail"])
         ) ?? ""
 
-        let phone = firstNonEmpty(
-            stringValue(info, keys: ["PVE_TELEFONO", "TELEFONO", "telefono", "TEL", "phone", "telNumber", "NRO_TELEFONO", "TELF1"]),
-            fuzzyString(in: info, matching: ["telefono", "telnumber", "phone", "celular", "telf"]),
+        var phone = firstNonEmpty(
+            stringValue(info, keys: [
+                "PVE_TELEFONO", "TELEFONO", "telefono", "TEL", "phone", "telNumber",
+                "NRO_TELEFONO", "TELF1", "TELF2", "TELFN", "celular", "mobile", "MOB_NUMBER"
+            ]),
+            fuzzyString(in: info, matching: ["telefono", "telnumber", "phone", "celular", "telf", "mobile"]),
             fuzzyString(in: meterExtras, matching: ["telefono", "telnumber", "phone", "celular"])
         ) ?? "—"
+        if phone != "—" {
+            let digits = phone.filter(\.isNumber)
+            if digits.count >= 8 { phone = digits }
+        }
 
         let tariff = firstNonEmpty(
             stringValue(info, keys: [
                 "PVE_TARIFA", "PVE_CATEGORIA", "TARIFA", "CATEGORIA", "categoria", "tarifa",
-                "TIPO_TARIFA", "CAT_TARIFA", "CLASE_TARIFA", "rateCategory"
+                "TIPO_TARIFA", "CAT_TARIFA", "CLASE_TARIFA", "rateCategory", "TARIFTYP",
+                "TARIFART", "KONDIGR", "BAKLASSE", "categoriaTarifaria"
             ]),
-            fuzzyString(in: info, matching: ["tarifa", "categoria", "rate", "clase"]),
-            fuzzyString(in: meterExtras, matching: ["tarifa", "categoria", "rate", "clase"])
+            fuzzyString(in: info, matching: ["tarifa", "categoria", "rate", "clase", "tariftyp", "tarifart"]),
+            fuzzyString(in: meterExtras, matching: ["tarifa", "categoria", "rate", "clase", "tarif"])
         ) ?? "—"
 
+        let holder = firstNonEmpty(
+            stringValue(info, keys: [
+                "PVE_TITULAR", "titular", "PVE_NOMBRE", "NOMBRE", "nombre", "fullName",
+                "holderName", "NAME1", "name1", "RAZON_SOCIAL", "razonSocial"
+            ]),
+            fuzzyString(in: info, matching: ["titular", "razon"]),
+            fuzzyString(in: meterExtras, matching: ["titular"])
+        ) ?? ""
+
         return AccountProfile(
-            holderName: firstNonEmpty(
-                stringValue(info, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE"]),
-                fuzzyString(in: info, matching: ["titular"])
-            ) ?? "",
+            holderName: holder,
             customerNumber: MetrogasURLs.normalizedCustomerNumber(customer) ?? customer,
             supplyAddress: parsedAddress.street ?? address,
             locality: locality,
             postalCode: postal,
-            email: email,
+            email: email.contains("@") ? email : "",
             phone: phone,
             meterNumber: meter,
             tariffCategory: tariff
@@ -511,36 +751,66 @@ enum MetrogasJSONParser {
         return (street, locality, postal)
     }
 
-    /// Parsea respuesta de publicSubscription (email de factura digital).
+    /// Parsea respuesta de publicSubscription / publicAccount (email/teléfono de contacto).
     static func parseSubscription(_ dict: [String: Any]) -> AccountProfile {
         var account = AccountProfile.empty
         if let email = firstNonEmpty(
-            stringValue(dict, keys: ["email", "Email", "digInvEmail", "mail", "MAIL"]),
-            fuzzyString(in: dict, matching: ["email", "mail"])
-        ) {
+            stringValue(dict, keys: ["email", "Email", "digInvEmail", "mail", "MAIL", "PVE_EMAIL", "SMTP_ADDR"]),
+            fuzzyString(in: dict, matching: ["email", "mail", "smtp"])
+        ), email.contains("@") {
             account.email = email
         }
         if let phone = firstNonEmpty(
-            stringValue(dict, keys: ["telNumber", "telefono", "phone", "TELEFONO", "TEL"]),
-            fuzzyString(in: dict, matching: ["telefono", "telnumber", "phone"])
+            stringValue(dict, keys: ["telNumber", "telefono", "phone", "TELEFONO", "TEL", "PVE_TELEFONO", "celular"]),
+            fuzzyString(in: dict, matching: ["telefono", "telnumber", "phone", "celular"])
         ) {
-            account.phone = phone
+            let digits = phone.filter(\.isNumber)
+            account.phone = digits.count >= 8 ? digits : phone
+        }
+        if let name = firstNonEmpty(
+            stringValue(dict, keys: ["PVE_TITULAR", "titular", "nombre", "name", "fullName"]),
+            fuzzyString(in: dict, matching: ["titular"])
+        ) {
+            account.holderName = name
         }
         return account
     }
 
-    /// Escaneo profundo de un JSON M360 por categoría / teléfono / domicilio.
+    /// Escaneo profundo de un JSON M360 por titular / medidor / categoría / teléfono / domicilio.
     static func enrichAccountFromAnyJSON(_ root: Any, into base: AccountProfile) -> AccountProfile {
         var account = base
         guard let dict = root as? [String: Any] else { return account }
+
+        if account.holderName.isEmpty {
+            if let name = firstNonEmpty(
+                stringValue(dict, keys: ["PVE_TITULAR", "titular", "PVE_NOMBRE", "NOMBRE", "holderName", "NAME1"]),
+                deepFuzzyString(in: dict, matching: ["titular"], depth: 0)
+            ), name.count >= 3, name.rangeOfCharacter(from: .letters) != nil {
+                account.holderName = name
+            }
+        }
+
+        if account.meterNumber == "—" || account.meterNumber.isEmpty {
+            if let meter = firstNonEmpty(
+                stringValue(dict, keys: ["NRO_MEDIDOR", "nro_medidor", "MEDIDOR", "meterNumber", "GERAET"]),
+                deepFuzzyString(in: dict, matching: ["nro_medidor", "nromedidor", "medidor", "geraet"], depth: 0)
+            ) {
+                account.meterNumber = meter
+            } else if let meters = (dict["meters"] as? [[String: Any]])
+                        ?? ((dict["info"] as? [String: Any])?["meters"] as? [[String: Any]]),
+                      let first = meters.first,
+                      let meter = stringValue(first, keys: ["NRO_MEDIDOR", "nro_medidor", "MEDIDOR"]) {
+                account.meterNumber = meter
+            }
+        }
 
         if account.tariffCategory == "—" || account.tariffCategory.isEmpty {
             if let tariff = firstNonEmpty(
                 stringValue(dict, keys: [
                     "PVE_TARIFA", "PVE_CATEGORIA", "TARIFA", "CATEGORIA", "categoria",
-                    "TIPO_TARIFA", "CAT_TARIFA", "CLASE_TARIFA", "rateCategory", "TARIFTYP"
+                    "TIPO_TARIFA", "CAT_TARIFA", "CLASE_TARIFA", "rateCategory", "TARIFTYP", "TARIFART"
                 ]),
-                deepFuzzyString(in: dict, matching: ["tarifa", "categoria", "tariftyp", "cat_tarif"], depth: 0)
+                deepFuzzyString(in: dict, matching: ["tarifa", "categoria", "tariftyp", "cat_tarif", "tarifart"], depth: 0)
             ) {
                 account.tariffCategory = tariff
             } else if let info = dict["info"] as? [String: Any],
@@ -550,37 +820,61 @@ enum MetrogasJSONParser {
                         ?? ((dict["info"] as? [String: Any])?["meters"] as? [Any]),
                       let hint = deepTariffHint(in: meters) {
                 account.tariffCategory = hint
+            } else if let hint = deepTariffHint(in: dict) {
+                account.tariffCategory = hint
             }
         }
 
         if account.phone == "—" || account.phone.isEmpty {
             if let phone = firstNonEmpty(
-                stringValue(dict, keys: ["PVE_TELEFONO", "TELEFONO", "telefono", "telNumber", "TEL_NUMBER", "TELF1"]),
-                deepFuzzyString(in: dict, matching: ["telefono", "telnumber", "telf1"], depth: 0)
+                stringValue(dict, keys: [
+                    "PVE_TELEFONO", "TELEFONO", "telefono", "telNumber", "TEL_NUMBER", "TELF1", "celular"
+                ]),
+                deepFuzzyString(in: dict, matching: ["telefono", "telnumber", "telf1", "celular"], depth: 0)
             ) {
-                account.phone = phone
+                let digits = phone.filter(\.isNumber)
+                account.phone = digits.count >= 8 ? digits : phone
             }
         }
 
         if account.email.isEmpty {
             if let email = firstNonEmpty(
-                stringValue(dict, keys: ["email", "Email", "digInvEmail", "SMTP_ADDR"]),
-                deepFuzzyString(in: dict, matching: ["email", "smtp"], depth: 0)
+                stringValue(dict, keys: ["email", "Email", "digInvEmail", "SMTP_ADDR", "PVE_EMAIL", "mail"]),
+                deepFuzzyString(in: dict, matching: ["email", "smtp", "diginv"], depth: 0)
             ), email.contains("@") {
                 account.email = email
             }
         }
 
-        if account.locality == "—" || account.postalCode == "—" {
+        if account.supplyAddress == "—" || account.supplyAddress.isEmpty
+            || account.locality == "—" || account.postalCode == "—" {
             let address = firstNonEmpty(
-                stringValue(dict, keys: ["PVE_DIRECCION", "accountAddress", "direccion", "DOMICILIO"]),
-                deepFuzzyString(in: dict, matching: ["direccion", "domicilio", "address"], depth: 0)
+                stringValue(dict, keys: ["PVE_DIRECCION", "accountAddress", "direccion", "DOMICILIO", "PVE_DOMICILIO"]),
+                deepFuzzyString(in: dict, matching: ["direccion", "domicilio", "accountaddress"], depth: 0)
             )
             if let address {
                 let parsed = parseArgentineAddress(address)
-                if account.locality == "—" { account.locality = parsed.locality ?? "—" }
-                if account.postalCode == "—" { account.postalCode = parsed.postalCode ?? "—" }
-                if account.supplyAddress == "—" { account.supplyAddress = parsed.street ?? address }
+                if account.locality == "—" || account.locality.isEmpty {
+                    account.locality = parsed.locality
+                        ?? firstNonEmpty(
+                            stringValue(dict, keys: ["PVE_LOCALIDAD", "LOCALIDAD", "localidad", "PARTIDO"]),
+                            deepFuzzyString(in: dict, matching: ["localidad", "partido"], depth: 0)
+                        )
+                        ?? "—"
+                }
+                if account.postalCode == "—" || account.postalCode.isEmpty {
+                    account.postalCode = parsed.postalCode ?? "—"
+                }
+                if account.supplyAddress == "—" || account.supplyAddress.isEmpty {
+                    account.supplyAddress = parsed.street ?? address
+                }
+            } else if account.locality == "—" || account.locality.isEmpty {
+                if let locality = firstNonEmpty(
+                    stringValue(dict, keys: ["PVE_LOCALIDAD", "LOCALIDAD", "localidad", "PARTIDO", "CITY"]),
+                    deepFuzzyString(in: dict, matching: ["localidad", "partido"], depth: 0)
+                ) {
+                    account.locality = locality
+                }
             }
         }
 
@@ -657,26 +951,59 @@ enum MetrogasJSONParser {
     }
 
     private static func parseM360Consumption(_ dict: [String: Any]) -> ConsumptionReading? {
-        let m3 = doubleValue(dict, keys: ["CONSUMO_PERIODO", "CONSUMO", "M3"])
-        guard let m3 else { return nil }
+        // Misma fuente que la web de saldos: PTE_CONSUMOS[].
+        let rawM3 = doubleValue(dict, keys: ["CONSUMO_PERIODO", "CONSUMO", "M3"])
+        guard let rawM3 else { return nil }
+        let m3 = floor(rawM3)
 
-        let year = Int(stringValue(dict, keys: ["ANO_PERIODO"]) ?? "") ?? Calendar.current.component(.year, from: Date())
-        let periodNum = Int(stringValue(dict, keys: ["NUMERO_PERIODO"]) ?? "") ?? 1
-        // bimestres ≈ 2 meses; aproximamos mes = period*2-1
+        let year = intValue(dict, keys: ["ANO_PERIODO"])
+            ?? Calendar.current.component(.year, from: Date())
+        let periodNum = min(max(intValue(dict, keys: ["NUMERO_PERIODO"]) ?? 1, 1), 6)
+        // Bimestre MetroGAS: 1=Ene-Feb … 6=Nov-Dic (igual criterio que la SPA).
         let month = min(max(periodNum * 2 - 1, 1), 12)
         let start = Calendar.metrogasDate(year: year, month: month, day: 1)
         let end = Calendar.current.date(byAdding: DateComponents(month: 2, day: -1), to: start) ?? start
-        let prev = doubleValue(dict, keys: ["CONSUMO_PERIODO_ANO_ANTERIOR"]) ?? 0
+        let prevRaw = doubleValue(dict, keys: ["CONSUMO_PERIODO_ANO_ANTERIOR"]) ?? 0
+        let prev = floor(prevRaw)
         let delta = prev > 0 ? ((m3 - prev) / prev) * 100 : 0
         let days = Double(Calendar.current.dateComponents([.day], from: start, to: end).day ?? 60) + 1
+
+        let yearText = stringValue(dict, keys: ["ANO_PERIODO"]) ?? "\(year)"
+        let yy = yearText.count == 4 ? String(yearText.suffix(2)) : yearText
+        let priorYear = stringValue(dict, keys: ["ANO_ANTERIOR"])
+        // Etiqueta idéntica a Main.controller.js de saldos.micuenta.
+        var peri = "(\(periodNum)-\(yy)) \(yearText)"
+        if let priorYear, !priorYear.isEmpty {
+            peri += " / \(priorYear)"
+        }
+
         return ConsumptionReading(
-            id: UUID(),
+            id: "m360-\(year)-\(periodNum)",
             periodStart: start,
             periodEnd: end,
             cubicMeters: m3,
             averageDaily: m3 / max(days, 1),
-            comparedToPreviousPercent: delta
+            comparedToPreviousPercent: delta,
+            periodNumber: periodNum,
+            year: year,
+            previousYearCubicMeters: prev,
+            periLabel: peri
         )
+    }
+
+    private static func intValue(_ dict: [String: Any], keys: [String]) -> Int? {
+        for key in keys {
+            if let n = dict[key] as? Int { return n }
+            if let n = dict[key] as? NSNumber { return n.intValue }
+            if let s = dict[key] as? String {
+                let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let v = Int(trimmed) { return v }
+                if let d = Double(trimmed.replacingOccurrences(of: ",", with: ".")) {
+                    return Int(d)
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: - Generic helpers
@@ -727,9 +1054,21 @@ enum MetrogasJSONParser {
         guard let m3, let start else { return nil }
         let end = dateValue(dict, keys: ["periodEnd", "FechaHasta"]) ?? start
         let days = Double(Calendar.current.dateComponents([.day], from: start, to: end).day ?? 30) + 1
+        let year = Calendar.current.component(.year, from: start)
+        let month = Calendar.current.component(.month, from: start)
+        let periodNumber = min(max((month + 1) / 2, 1), 6)
+        let floored = floor(m3)
         return ConsumptionReading(
-            id: UUID(), periodStart: start, periodEnd: end, cubicMeters: m3,
-            averageDaily: m3 / max(days, 1), comparedToPreviousPercent: 0
+            id: "generic-\(Int(start.timeIntervalSince1970))",
+            periodStart: start,
+            periodEnd: end,
+            cubicMeters: floored,
+            averageDaily: floored / max(days, 1),
+            comparedToPreviousPercent: 0,
+            periodNumber: periodNumber,
+            year: year,
+            previousYearCubicMeters: 0,
+            periLabel: ""
         )
     }
 

@@ -3,6 +3,7 @@ import SwiftUI
 struct InvoiceListView: View {
     @EnvironmentObject private var store: AccountDataStore
     @EnvironmentObject private var session: AppSession
+    @EnvironmentObject private var reminders: ReminderService
     @EnvironmentObject private var tabScroll: TabBarScrollState
     @State private var appear = false
 
@@ -42,9 +43,16 @@ struct InvoiceListView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Facturas")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .searchable(text: $store.searchText, prompt: "Buscar N° o período")
             .refreshable {
-                await store.refresh(loginHint: session.loginEmail, force: true)
+                await store.refresh(
+                    loginHint: session.loginEmail,
+                    customerNumber: session.customerNumber,
+                    force: true
+                )
+                await reminders.reschedule(for: store.invoices)
+                await reminders.notifyNewInvoices(from: store.invoices)
             }
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }

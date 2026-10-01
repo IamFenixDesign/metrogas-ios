@@ -18,8 +18,17 @@ enum MetrogasURLs {
         URL(string: "https://saldos.micuenta.metrogas.com.ar/index.html#/go/\(accountId)")!
     }
 
+    /// Deep link de pago MetroGAS (tarjeta, código, MODO, Mercado Pago).
+    static func saldosPagar(accountId: String) -> URL {
+        URL(string: "https://saldos.micuenta.metrogas.com.ar/index.html#/pagar/\(accountId)")!
+    }
+
+    /// Guía institucional de medios de pago.
+    static let comoPagar = URL(string: "https://www.metrogas.com.ar/hogares/paginas/como-pagar-tu-factura.aspx")!
+
     static let m360InvoiceList = URL(string: "https://saldos.micuenta.metrogas.com.ar/OvServiceHub/api/v1/M360/publicinvoice/listR2")!
     static let m360Billing = URL(string: "https://saldos.micuenta.metrogas.com.ar/OvServiceHub/api/v1/M360/publicbilling/r2")!
+    static let m360PublicAccount = URL(string: "https://saldos.micuenta.metrogas.com.ar/OvServiceHub/api/v1/M360/publicAccount")!
 
     static func m360Consumption(accountId: String) -> URL {
         URL(string: "https://saldos.micuenta.metrogas.com.ar/OvServiceHub/api/v1/M360/publicinvoice/consumption/\(accountId)")!

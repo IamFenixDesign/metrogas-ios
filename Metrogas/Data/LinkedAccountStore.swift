@@ -1,7 +1,7 @@
 import Foundation
 
-/// Vincula el email de login (Google o MetroGAS) con el N° de cliente
-/// confirmado por M360 billing. Nunca guarda IDs scrapeados sin confirmar.
+/// Guarda el N° de cliente MetroGAS usado en la app.
+/// Login actual: solo N° (11 dígitos). El vínculo por email queda como legado.
 enum LinkedAccountStore {
     private static let prefix = "metrogas.linkedCustomer."
     private static let confirmedPrefix = "metrogas.linkedCustomer.confirmed."
@@ -9,7 +9,8 @@ enum LinkedAccountStore {
     private static let globalCustomerKey = "metrogas.account.customerNumber"
     private static let schemaKey = "metrogas.linkedCustomer.schemaVersion"
     /// Subir esto limpia vínculos viejos/envenenados una vez por dispositivo.
-    private static let currentSchema = 4
+    /// 6: login por N° de cliente — descarta vínculos Google/email previos.
+    private static let currentSchema = 6
 
     /// Migración: borra vínculos previos al esquema actual (scrapes / fast-path erróneos).
     static func migrateIfNeeded() {
@@ -35,11 +36,25 @@ enum LinkedAccountStore {
     static func bind(email: String?, customerNumber: String) {
         migrateIfNeeded()
         guard let normalized = MetrogasURLs.normalizedCustomerNumber(customerNumber) else { return }
+        UserDefaults.standard.set(normalized, forKey: globalCustomerKey)
         guard let email = normalizedEmail(email) else { return }
         UserDefaults.standard.set(normalized, forKey: prefix + email)
         UserDefaults.standard.set(normalized, forKey: confirmedPrefix + email)
-        UserDefaults.standard.set(normalized, forKey: globalCustomerKey)
         UserDefaults.standard.set(email, forKey: lastEmailKey)
+    }
+
+    /// Login directo por N° de cliente (sin email Google/MetroGAS).
+    static func bindCustomerOnly(_ customerNumber: String) {
+        migrateIfNeeded()
+        guard let normalized = MetrogasURLs.normalizedCustomerNumber(customerNumber) else { return }
+        UserDefaults.standard.set(normalized, forKey: globalCustomerKey)
+    }
+
+    static func lastCustomerNumber() -> String? {
+        migrateIfNeeded()
+        return MetrogasURLs.normalizedCustomerNumber(
+            UserDefaults.standard.string(forKey: globalCustomerKey) ?? ""
+        )
     }
 
     /// Quita un vínculo erróneo para forzar rediscovery en el portal.

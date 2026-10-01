@@ -31,6 +31,7 @@ struct ConsumptionView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Consumo")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .onAppear {
                 withAnimation(MetrogasTheme.springSoft) { appear = true }
             }
@@ -57,7 +58,7 @@ struct ConsumptionView: View {
                 accent: MetrogasTheme.brandBlue
             )
             MetricTile(
-                title: "Períodos",
+                title: "Bimestres",
                 value: "\(store.visibleReadings.count)",
                 icon: "calendar",
                 accent: MetrogasTheme.brandFlame
@@ -68,47 +69,62 @@ struct ConsumptionView: View {
     private var chartCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(
-                title: "Historial de uso",
-                subtitle: "Metros cúbicos por período de facturación"
+                title: "Consumos",
+                subtitle: "Actual vs mismo bimestre del año anterior (como en MetroGAS)"
             )
 
             if store.visibleReadings.isEmpty {
                 Text(
                     store.isLoading
                         ? "Cargando consumo…"
-                        : "No hay datos de consumo para el período elegido."
+                        : "No hay información de consumo"
                 )
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, minHeight: 180, alignment: .center)
             } else {
-                Chart(store.visibleReadings) { reading in
-                    BarMark(
-                        x: .value("Mes", reading.monthLabel),
-                        y: .value("m³", reading.cubicMeters)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [MetrogasTheme.brandBlue, MetrogasTheme.brandCyan],
-                            startPoint: .bottom,
-                            endPoint: .top
+                Chart {
+                    ForEach(store.visibleReadings) { reading in
+                        BarMark(
+                            x: .value("Período", reading.chartLabel),
+                            y: .value("m³", reading.cubicMeters)
                         )
-                    )
-                    .cornerRadius(8)
+                        .foregroundStyle(by: .value("Serie", "Actual"))
+                        .position(by: .value("Serie", "Actual"))
+                        .cornerRadius(6)
 
-                    RuleMark(y: .value("Promedio", store.averageConsumption))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 4]))
-                        .foregroundStyle(MetrogasTheme.deepNavy.opacity(0.45))
-                        .annotation(position: .top, alignment: .trailing) {
-                            Text("Prom.")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
+                        if reading.previousYearCubicMeters > 0 {
+                            BarMark(
+                                x: .value("Período", reading.chartLabel),
+                                y: .value("m³", reading.previousYearCubicMeters)
+                            )
+                            .foregroundStyle(by: .value("Serie", "Anterior"))
+                            .position(by: .value("Serie", "Anterior"))
+                            .cornerRadius(6)
                         }
+                    }
+                }
+                .chartForegroundStyleScale([
+                    "Actual": MetrogasTheme.brandBlue,
+                    "Anterior": MetrogasTheme.brandFlame.opacity(0.85)
+                ])
+                .chartLegend(position: .top, alignment: .trailing)
+                .chartXAxis {
+                    AxisMarks { value in
+                        AxisValueLabel {
+                            if let label = value.as(String.self) {
+                                Text(label)
+                                    .font(.caption2.weight(.semibold))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                            }
+                        }
+                    }
                 }
                 .chartYAxis {
                     AxisMarks(position: .leading)
                 }
-                .frame(height: 220)
+                .frame(height: 240)
                 .animation(MetrogasTheme.springSoft, value: store.consumptionPeriod)
             }
         }
@@ -118,45 +134,51 @@ struct ConsumptionView: View {
 
     private var comparisonCard: some View {
         Group {
-            if let latest = store.visibleReadings.last,
-               let previous = store.visibleReadings.dropLast().last {
+            if let latest = store.visibleReadings.last {
                 VStack(alignment: .leading, spacing: 10) {
-                    SectionHeader(title: "Comparación de períodos")
+                    SectionHeader(
+                        title: "Último bimestre",
+                        subtitle: latest.fullPeriodLabel
+                    )
 
-                    HStack(alignment: .firstTextBaseline) {
+                    HStack(alignment: .firstTextBaseline, spacing: 16) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(previous.fullPeriodLabel)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(Formatters.m3(previous.cubicMeters))
-                                .font(.title3.weight(.semibold).monospacedDigit())
-                        }
-
-                        Image(systemName: "arrow.right")
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 8)
-                            .symbolEffect(.pulse, options: .repeating.speed(0.5), isActive: true)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(latest.fullPeriodLabel)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            Text("Actual")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(MetrogasTheme.brandBlue)
                             Text(Formatters.m3(latest.cubicMeters))
                                 .font(.title3.weight(.semibold).monospacedDigit())
                         }
 
-                        Spacer()
+                        if latest.previousYearCubicMeters > 0 {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Anterior")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(MetrogasTheme.brandFlame)
+                                Text(Formatters.m3(latest.previousYearCubicMeters))
+                                    .font(.title3.weight(.semibold).monospacedDigit())
+                            }
 
-                        let delta = ((latest.cubicMeters - previous.cubicMeters) / previous.cubicMeters) * 100
-                        Text(Formatters.signedPercent(delta))
-                            .font(.headline.monospacedDigit())
-                            .foregroundStyle(delta > 0 ? MetrogasTheme.danger : MetrogasTheme.success)
-                            .contentTransition(.numericText())
+                            Spacer()
+
+                            Text(Formatters.signedPercent(latest.comparedToPreviousPercent))
+                                .font(.headline.monospacedDigit())
+                                .foregroundStyle(
+                                    latest.comparedToPreviousPercent > 0
+                                        ? MetrogasTheme.danger
+                                        : MetrogasTheme.success
+                                )
+                                .contentTransition(.numericText())
+                        } else {
+                            Spacer()
+                        }
                     }
 
-                    Text(deltaCopy(latest: latest, previous: previous))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    if latest.previousYearCubicMeters > 0 {
+                        Text(yearOverYearCopy(latest))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .padding(18)
                 .liquidGlass(cornerRadius: 22)
@@ -166,10 +188,10 @@ struct ConsumptionView: View {
 
     private var historyList: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Detalle mensual")
+            SectionHeader(title: "Detalle por período", subtitle: "Consumo facturado (m³)")
 
             if store.visibleReadings.isEmpty {
-                Text("Cuando haya lecturas sincronizadas, van a aparecer acá.")
+                Text("Cuando MetroGAS tenga lecturas, van a aparecer acá.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .padding(16)
@@ -177,7 +199,7 @@ struct ConsumptionView: View {
                     .liquidGlass(cornerRadius: 18)
             } else {
                 ForEach(Array(store.visibleReadings.reversed().enumerated()), id: \.element.id) { index, reading in
-                    HStack {
+                    HStack(alignment: .top, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(reading.fullPeriodLabel)
                                 .font(.subheadline.weight(.semibold))
@@ -185,17 +207,22 @@ struct ConsumptionView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Spacer()
+                        Spacer(minLength: 8)
                         VStack(alignment: .trailing, spacing: 4) {
                             Text(Formatters.m3(reading.cubicMeters))
                                 .font(.subheadline.weight(.bold).monospacedDigit())
-                            Text(Formatters.signedPercent(reading.comparedToPreviousPercent))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(
-                                    reading.comparedToPreviousPercent >= 0
-                                        ? MetrogasTheme.danger
-                                        : MetrogasTheme.success
-                                )
+                            if reading.previousYearCubicMeters > 0 {
+                                Text("Ant. \(Formatters.m3(reading.previousYearCubicMeters))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Text(Formatters.signedPercent(reading.comparedToPreviousPercent))
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(
+                                        reading.comparedToPreviousPercent >= 0
+                                            ? MetrogasTheme.danger
+                                            : MetrogasTheme.success
+                                    )
+                            }
                         }
                     }
                     .padding(14)
@@ -206,13 +233,14 @@ struct ConsumptionView: View {
         }
     }
 
-    private func deltaCopy(latest: ConsumptionReading, previous: ConsumptionReading) -> String {
-        let delta = latest.cubicMeters - previous.cubicMeters
+    private func yearOverYearCopy(_ latest: ConsumptionReading) -> String {
+        let delta = latest.cubicMeters - latest.previousYearCubicMeters
         if delta > 0 {
-            return "El último período consumió \(Formatters.m3(delta)) más que \(previous.fullPeriodLabel)."
-        } else if delta < 0 {
-            return "El último período ahorró \(Formatters.m3(abs(delta))) respecto de \(previous.fullPeriodLabel)."
+            return "Consumiste \(Formatters.m3(delta)) más que en el mismo bimestre del año anterior."
         }
-        return "El consumo se mantuvo igual entre ambos períodos."
+        if delta < 0 {
+            return "Consumiste \(Formatters.m3(abs(delta))) menos que en el mismo bimestre del año anterior."
+        }
+        return "El consumo fue igual al mismo bimestre del año anterior."
     }
 }

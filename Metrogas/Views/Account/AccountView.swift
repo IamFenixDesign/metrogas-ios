@@ -26,50 +26,57 @@ struct AccountView: View {
                     .appearMotion(visible: appear, index: 0)
                 }
 
-                if store.needsCustomerNumber {
-                    Section {
-                        TextField("11 dígitos", text: $store.customerNumberDraft)
-                            .keyboardType(.numberPad)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .font(.body.monospacedDigit())
-                        if let customerNumberError {
-                            Text(customerNumberError)
-                                .font(.caption)
-                                .foregroundStyle(MetrogasTheme.brandFlame)
-                        }
-                        Button("Vincular a esta cuenta") {
-                            if store.saveCustomerNumber(store.customerNumberDraft, forEmail: session.loginEmail) {
-                                customerNumberError = nil
-                                Task { await store.refresh(loginHint: session.loginEmail, force: true) }
-                            } else {
-                                customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
-                            }
-                        }
-                        .disabled(store.isLoading)
-                    } header: {
-                        Text("Respaldo N° de cliente")
-                    } footer: {
-                        Text("Solo si tu usuario Google/MetroGAS todavía no tiene N° asociado. Queda vinculado a esta cuenta para las próximas veces.")
+                Section {
+                    TextField("11 dígitos", text: $store.customerNumberDraft)
+                        .keyboardType(.numberPad)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.body.monospacedDigit())
+                    if let customerNumberError {
+                        Text(customerNumberError)
+                            .font(.caption)
+                            .foregroundStyle(MetrogasTheme.brandFlame)
                     }
-                    .listRowBackground(glassListRow)
-                    .listRowInsets(sectionRowInsets)
+                    Button("Actualizar datos de este N°") {
+                        if store.saveCustomerNumber(store.customerNumberDraft, forEmail: session.loginEmail) {
+                            customerNumberError = nil
+                            session.customerNumber = MetrogasURLs.normalizedCustomerNumber(store.customerNumberDraft)
+                            Task {
+                                await store.refresh(
+                                    loginHint: session.loginEmail,
+                                    customerNumber: session.customerNumber,
+                                    force: true
+                                )
+                                await reminders.reschedule(for: store.invoices)
+                                await reminders.notifyNewInvoices(from: store.invoices)
+                            }
+                        } else {
+                            customerNumberError = "El N° de cliente debe tener exactamente 11 dígitos."
+                        }
+                    }
+                    .disabled(store.isLoading)
+                } header: {
+                    Text("N° de cliente")
+                } footer: {
+                    Text("Podés cambiar el N° y volver a sincronizar facturas y titular desde MetroGAS.")
                 }
+                .listRowBackground(glassListRow)
+                .listRowInsets(sectionRowInsets)
 
                 Section("Suministro") {
-                    labeled("N° de cliente", store.account.customerNumber)
-                    labeled("Medidor", store.account.meterNumber)
-                    labeled("Categoría", store.account.tariffCategory)
-                    labeled("Dirección", store.account.supplyAddress)
-                    labeled("Localidad", store.account.locality)
-                    labeled("CP", store.account.postalCode)
+                    labeled("N° de cliente", display(store.account.customerNumber))
+                    labeled("Medidor", display(store.account.meterNumber))
+                    labeled("Categoría", display(store.account.tariffCategory))
+                    labeled("Dirección", display(store.account.supplyAddress))
+                    labeled("Localidad", display(store.account.locality))
+                    labeled("CP", display(store.account.postalCode))
                 }
                 .listRowBackground(glassListRow)
                 .listRowInsets(sectionRowInsets)
 
                 Section("Contacto") {
                     labeled("Email", displayEmail)
-                    labeled("Teléfono", store.account.phone)
+                    labeled("Teléfono", display(store.account.phone))
                 }
                 .listRowBackground(glassListRow)
                 .listRowInsets(sectionRowInsets)
@@ -91,13 +98,30 @@ struct AccountView: View {
                     .onChange(of: reminders.daysBeforeDue) { _, _ in
                         Task { await reminders.reschedule(for: store.invoices) }
                     }
+
+                    Toggle("Avisar factura nueva", isOn: $reminders.newInvoiceAlertsEnabled)
+                        .padding(.vertical, 4)
+
+                    Button {
+                        Task { await reminders.sendTestNewInvoiceNotification() }
+                    } label: {
+                        Label("Probar notificación de factura nueva", systemImage: "bell.badge.fill")
+                    }
+                    .padding(.vertical, 4)
+
+                    if let message = reminders.testNotificationMessage {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 2)
+                    }
                 } header: {
-                    Text("Recordatorios")
+                    Text("Notificaciones")
                 } footer: {
                     if reminders.authorizationStatus == .denied {
                         Text("Las notificaciones están desactivadas. Activalas en Ajustes → Metrogas → Notificaciones.")
                     } else {
-                        Text("Avisos nativos de iOS según tus facturas sincronizadas.")
+                        Text("Recordatorios de vencimiento y avisos de factura nueva. El centro de notificaciones está en Inicio (campana).")
                     }
                 }
                 .listRowBackground(glassListRow)
@@ -154,6 +178,7 @@ struct AccountView: View {
             .background { LiquidGlassBackground() }
             .navigationTitle("Cuenta")
             .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .task {
                 await reminders.refreshAuthorizationStatus()
             }
@@ -192,6 +217,11 @@ struct AccountView: View {
         if !store.account.email.isEmpty { return store.account.email }
         if let email = session.loginEmail, !email.isEmpty { return email }
         return "—"
+    }
+
+    private func display(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "—" : trimmed
     }
 
     private var profileHeader: some View {

@@ -402,8 +402,9 @@ actor MetrogasAuthService {
     }
 
     private func formBody(_ fields: [String: String]) -> Data {
-        var allowed = CharacterSet.urlQueryAllowed
-        allowed.remove(charactersIn: ":#[]@!$&'()*+,;=")
+        // Encode estricto: firmas/SAML con '/' y '+' (Google → IdP).
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
         let pairs = fields.map { key, value in
             let k = key.addingPercentEncoding(withAllowedCharacters: allowed) ?? key
             let v = value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
